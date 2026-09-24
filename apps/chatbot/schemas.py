@@ -44,3 +44,21 @@ class ChatResponse(BaseModel):
     success: bool
     metadata: Dict[str, Any] = Field(default_factory=dict)
     messages: List[MessageOut] = []
+
+
+# ---------- Settings ----------
+class SettingsUpdateRequest(BaseModel):
+    provider: str = Field(default="groq", description="Nhà cung cấp LLM (groq, openai, ollama)")
+    api_key: Optional[str] = Field(default=None, description="API Key (gsk_... hoặc sk-...)")
+    model: Optional[str] = Field(default="openai/gpt-oss-120b", description="Tên mô hình LLM")
+    base_url: Optional[str] = Field(default=None, description="URL cơ sở API (nếu tùy chỉnh)")
+
+
+class SettingsResponse(BaseModel):
+    success: bool
+    message: str
+    provider: str
+    model: str
+    base_url: Optional[str] = None
+    has_api_key: bool
+    masked_api_key: Optional[str] = None

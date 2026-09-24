@@ -119,14 +119,15 @@
         <button id="closeSettingsBtn" class="modal-close">&times;</button>
       </div>
       <div class="modal-body">
+        <div id="settingsStatusMsg" style="display:none; font-size:12px; padding:8px 12px; border-radius:6px; margin-bottom:12px;"></div>
         <p style="font-size:12px; color:#94a3b8; line-height:1.5;">
-          Bạn có thể nhập API Key để Agent sử dụng LLM thông minh (Groq hoặc OpenAI). Nếu để trống, hệ thống sẽ hoạt động 100% ở chế độ Rule-based & Mock Data offline.
+          Nhập API Key và nhấn <strong>Lưu cấu hình</strong>. Hệ thống sẽ tự động tạo/cập nhật file <code>.env</code> chuẩn cho dự án (mặc định cấu hình Groq API Key với model <code>openai/gpt-oss-120b</code>) và nạp ngay vào bộ nhớ.
         </p>
 
         <div class="form-group">
           <label for="settingProvider">Nhà cung cấp (Provider):</label>
           <select id="settingProvider">
-            <option value="groq">Groq Cloud (Miễn phí & Tốc độ cao)</option>
+            <option value="groq" selected>Groq Cloud (Khuyên dùng: openai/gpt-oss-120b)</option>
             <option value="openai">OpenAI (GPT-4o, GPT-4o-mini)</option>
             <option value="ollama">Ollama (Local LLM)</option>
           </select>
@@ -134,16 +135,17 @@
 
         <div class="form-group">
           <label for="settingApiKey">API Key:</label>
-          <input type="password" id="settingApiKey" placeholder="gsk_... hoặc sk-...">
+          <input type="password" id="settingApiKey" placeholder="Dán Groq API Key (bắt đầu bằng gsk_...)">
+          <small id="apiKeyNotice" style="display:none; color:#34d399; font-size:11px; margin-top:4px;"></small>
         </div>
 
         <div class="form-group">
           <label for="settingModel">Model Name:</label>
-          <input type="text" id="settingModel" placeholder="openai/gpt-oss-120b hoặc gpt-4o-mini">
+          <input type="text" id="settingModel" value="openai/gpt-oss-120b" placeholder="openai/gpt-oss-120b">
         </div>
       </div>
       <div class="modal-footer">
-        <button id="saveSettingsBtn" class="btn-save">Lưu cấu hình</button>
+        <button id="saveSettingsBtn" class="btn-save">💾 Lưu cấu hình & Tạo .env</button>
       </div>
     </div>
   </div>

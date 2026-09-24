@@ -430,31 +430,142 @@ async function handleSendMessage() {
 }
 
 // Settings Modal Management
-function loadSettings() {
+async function loadSettings() {
+  const pEl = document.getElementById("settingProvider");
+  const kEl = document.getElementById("settingApiKey");
+  const mEl = document.getElementById("settingModel");
+  const noticeEl = document.getElementById("apiKeyNotice");
+
+  // Listener to change model default based on selected provider
+  if (pEl && mEl) {
+    pEl.addEventListener("change", () => {
+      const selected = pEl.value;
+      if (selected === "groq") {
+        mEl.value = "openai/gpt-oss-120b";
+        if (kEl) kEl.placeholder = "Dán Groq API Key (bắt đầu bằng gsk_...)";
+      } else if (selected === "openai") {
+        mEl.value = "gpt-4o-mini";
+        if (kEl) kEl.placeholder = "Dán OpenAI API Key (bắt đầu bằng sk-...)";
+      } else if (selected === "ollama") {
+        mEl.value = "llama3.2";
+        if (kEl) kEl.placeholder = "Tùy chọn (để trống nếu chạy local)";
+      }
+    });
+  }
+
+  // Load from backend /settings API
+  try {
+    const res = await fetch("/settings");
+    if (res.ok) {
+      const data = await res.json();
+      if (pEl && data.provider) pEl.value = data.provider;
+      if (mEl && data.model) mEl.value = data.model;
+      if (data.has_api_key && noticeEl) {
+        noticeEl.style.display = "block";
+        noticeEl.textContent = `✓ Đã cấu hình trong .env: ${data.masked_api_key}`;
+        if (kEl) kEl.placeholder = `${data.masked_api_key} (nhập key mới để thay đổi)`;
+      }
+      return;
+    }
+  } catch (err) {
+    console.warn("Không thể tải /settings từ server, dùng localStorage fallback:", err);
+  }
+
+  // LocalStorage fallback
   const provider = localStorage.getItem("llm_provider") || "groq";
   const apiKey = localStorage.getItem("llm_api_key") || "";
   const model = localStorage.getItem("llm_model") || "openai/gpt-oss-120b";
 
-  const pEl = document.getElementById("settingProvider");
-  const kEl = document.getElementById("settingApiKey");
-  const mEl = document.getElementById("settingModel");
-
   if (pEl) pEl.value = provider;
-  if (kEl) kEl.value = apiKey;
+  if (kEl && apiKey) kEl.value = apiKey;
   if (mEl) mEl.value = model;
 }
 
-function saveSettings() {
-  const provider = document.getElementById("settingProvider").value;
-  const apiKey = document.getElementById("settingApiKey").value;
-  const model = document.getElementById("settingModel").value;
+async function saveSettings() {
+  const pEl = document.getElementById("settingProvider");
+  const kEl = document.getElementById("settingApiKey");
+  const mEl = document.getElementById("settingModel");
+  const statusMsgEl = document.getElementById("settingsStatusMsg");
+  const noticeEl = document.getElementById("apiKeyNotice");
 
-  localStorage.setItem("llm_provider", provider);
-  localStorage.setItem("llm_api_key", apiKey);
-  localStorage.setItem("llm_model", model);
+  const provider = pEl ? pEl.value : "groq";
+  const apiKey = kEl ? kEl.value.trim() : "";
+  const model = mEl ? mEl.value.trim() : "openai/gpt-oss-120b";
 
-  settingsModal.style.display = "none";
-  alert("Đã lưu cấu hình LLM thành công!");
+  saveSettingsBtn.disabled = true;
+  const originalBtnText = saveSettingsBtn.innerHTML;
+  saveSettingsBtn.innerHTML = "⏳ Đang tạo .env & kích hoạt...";
+
+  if (statusMsgEl) {
+    statusMsgEl.style.display = "none";
+  }
+
+  try {
+    const res = await fetch("/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: provider,
+        api_key: apiKey,
+        model: model,
+      }),
+    });
+
+    const data = await res.json();
+
+    if (res.ok && data.success) {
+      localStorage.setItem("llm_provider", data.provider);
+      localStorage.setItem("llm_model", data.model);
+      if (apiKey) localStorage.setItem("llm_api_key", apiKey);
+
+      if (noticeEl && data.has_api_key) {
+        noticeEl.style.display = "block";
+        noticeEl.textContent = `✓ Đã cấu hình trong .env: ${data.masked_api_key}`;
+        if (kEl) {
+          kEl.value = "";
+          kEl.placeholder = `${data.masked_api_key} (nhập key mới để thay đổi)`;
+        }
+      }
+
+      if (statusMsgEl) {
+        statusMsgEl.style.display = "block";
+        statusMsgEl.style.backgroundColor = "rgba(16, 185, 129, 0.2)";
+        statusMsgEl.style.border = "1px solid #10b981";
+        statusMsgEl.style.color = "#34d399";
+        statusMsgEl.innerHTML = `<strong>Thành công!</strong> Đã tạo file <code>.env</code> chuẩn (Provider: <code>${data.provider}</code>, Model: <code>${data.model}</code>).`;
+      }
+
+      setTimeout(() => {
+        settingsModal.style.display = "none";
+        if (statusMsgEl) statusMsgEl.style.display = "none";
+      }, 1200);
+
+    } else {
+      const errDetail = data.detail || data.message || "Không thể lưu cấu hình";
+      if (statusMsgEl) {
+        statusMsgEl.style.display = "block";
+        statusMsgEl.style.backgroundColor = "rgba(239, 68, 68, 0.2)";
+        statusMsgEl.style.border = "1px solid #ef4444";
+        statusMsgEl.style.color = "#f87171";
+        statusMsgEl.textContent = `Lỗi: ${errDetail}`;
+      } else {
+        alert(`❌ Lỗi khi lưu cấu hình: ${errDetail}`);
+      }
+    }
+  } catch (err) {
+    if (statusMsgEl) {
+      statusMsgEl.style.display = "block";
+      statusMsgEl.style.backgroundColor = "rgba(239, 68, 68, 0.2)";
+      statusMsgEl.style.border = "1px solid #ef4444";
+      statusMsgEl.style.color = "#f87171";
+      statusMsgEl.textContent = `Lỗi kết nối API: ${err.message}`;
+    } else {
+      alert(`❌ Lỗi kết nối API: ${err.message}`);
+    }
+  } finally {
+    saveSettingsBtn.disabled = false;
+    saveSettingsBtn.innerHTML = originalBtnText;
+  }
 }
 
 // Run on page load

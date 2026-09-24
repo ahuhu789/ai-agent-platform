@@ -18,13 +18,13 @@ class OpenAILLM(LLM):
         except ImportError as exc:
             raise LLMProviderError("Thư viện 'openai' chưa được cài đặt. Hãy chạy: pip install openai") from exc
 
-        api_key = os.getenv("OPENAI_API_KEY") or config.extra.get("api_key")
+        api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GROQ_API_KEY") or config.extra.get("api_key")
         base_url = os.getenv("OPENAI_BASE_URL") or config.extra.get("base_url")
         timeout = float(os.getenv("OPENAI_TIMEOUT")) if os.getenv("OPENAI_TIMEOUT") else (config.timeout or 30)
 
         if not api_key:
             raise LLMProviderError(
-                "Chưa cấu hình API Key cho OpenAI/Groq. Vui lòng thiết lập biến môi trường OPENAI_API_KEY hoặc config.extra.api_key"
+                "Chưa cấu hình API Key cho OpenAI/Groq. Vui lòng thiết lập biến môi trường OPENAI_API_KEY hoặc GROQ_API_KEY hoặc config.extra.api_key"
             )
 
         client_kwargs = {

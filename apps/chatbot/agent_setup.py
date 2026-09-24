@@ -49,7 +49,7 @@ def setup_mcp_client() -> MultiServerMCPClient:
 
 def setup_llm() -> Optional[BaseLLM]:
     """Khởi tạo LLM Provider thông qua LLMFactory.
-    Chỉ kích hoạt khi có OPENAI_API_KEY hoặc LLM_PROVIDER được chỉ định cụ thể.
+    Hỗ trợ Groq, OpenAI hoặc Mock LLM.
     Khi chưa cấu hình API key, trả về None để các Agent chạy ở chế độ Rule-based
     và Template Formatter với đầy đủ dữ liệu thực tế thay vì trả về Mock response.
     """
@@ -57,16 +57,17 @@ def setup_llm() -> Optional[BaseLLM]:
     try:
         config = load_config(str(config_path))
         env_provider = os.getenv("LLM_PROVIDER")
-        openai_key = os.getenv("OPENAI_API_KEY")
+        api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GROQ_API_KEY")
 
         if env_provider and env_provider.lower().strip() != "mock":
             config.active_provider = env_provider.lower().strip()
-        elif openai_key:
-            config.active_provider = "openai"
+        elif api_key:
+            # Tự động nhận diện Groq key (gsk_...) hoặc OpenAI key (sk-...)
+            config.active_provider = "groq" if api_key.startswith("gsk_") else "openai"
         elif env_provider and env_provider.lower().strip() == "mock":
             config.active_provider = "mock"
         else:
-            logger.info("[AgentSetup] No OPENAI_API_KEY set. Running in offline Rule-based & Template mode.")
+            logger.info("[AgentSetup] No OPENAI_API_KEY or GROQ_API_KEY set. Running in offline Rule-based & Template mode.")
             return None
 
         llm_instance = LLMFactory.create(config)
@@ -101,3 +102,17 @@ def build_root_agent(
 
 # Singleton dùng chung cho toàn bộ Chat API
 root_agent = build_root_agent()
+
+
+def reload_agent_setup():
+    """Tải lại LLM Provider và tái khởi tạo RootAgent/DomainAgents khi cấu hình .env thay đổi."""
+    global llm_provider, root_agent
+    llm_provider = setup_llm()
+    root_agent = build_root_agent(llm=llm_provider)
+    try:
+        from apps.chatbot.services.chat_service import chat_service
+        chat_service.root_agent = root_agent
+        logger.info("[AgentSetup] Successfully reloaded ChatService root_agent.")
+    except Exception as exc:
+        logger.warning("[AgentSetup] Could not update chat_service.root_agent (%s)", exc)
+    return root_agent
