@@ -49,7 +49,7 @@ def setup_mcp_client() -> MultiServerMCPClient:
 
 def setup_llm() -> Optional[BaseLLM]:
     """Khởi tạo LLM Provider thông qua LLMFactory.
-    Hỗ trợ Groq, OpenAI hoặc Mock LLM.
+    Hỗ trợ Groq, OpenRouter, Google AI Studio, DeepSeek, Qwen, OpenAI hoặc Mock LLM.
     Khi chưa cấu hình API key, trả về None để các Agent chạy ở chế độ Rule-based
     và Template Formatter với đầy đủ dữ liệu thực tế thay vì trả về Mock response.
     """
@@ -57,18 +57,45 @@ def setup_llm() -> Optional[BaseLLM]:
     try:
         config = load_config(str(config_path))
         env_provider = os.getenv("LLM_PROVIDER")
-        api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GROQ_API_KEY")
+        api_key = (
+            os.getenv("OPENAI_API_KEY")
+            or os.getenv("GROQ_API_KEY")
+            or os.getenv("OPENROUTER_API_KEY")
+            or os.getenv("DEEPSEEK_API_KEY")
+            or os.getenv("DASHSCOPE_API_KEY")
+            or os.getenv("GEMINI_API_KEY")
+        )
 
         if env_provider and env_provider.lower().strip() != "mock":
-            config.active_provider = env_provider.lower().strip()
+            p = env_provider.lower().strip()
+            config.active_provider = "google" if p == "gemini" else p
         elif api_key:
-            # Tự động nhận diện Groq key (gsk_...) hoặc OpenAI key (sk-...)
-            config.active_provider = "groq" if api_key.startswith("gsk_") else "openai"
+            # Tự động nhận diện provider theo tiền tố API key
+            if api_key.startswith("gsk_"):
+                config.active_provider = "groq"
+            elif api_key.startswith("sk-or-"):
+                config.active_provider = "openrouter"
+            elif api_key.startswith("AIzaSy"):
+                config.active_provider = "google"
+            else:
+                config.active_provider = "openai"
         elif env_provider and env_provider.lower().strip() == "mock":
             config.active_provider = "mock"
         else:
-            logger.info("[AgentSetup] No OPENAI_API_KEY or GROQ_API_KEY set. Running in offline Rule-based & Template mode.")
+            logger.info("[AgentSetup] No API key set. Running in offline Rule-based & Template mode.")
             return None
+
+        # Đảm bảo nếu provider chưa có trong config.providers thì tự động cấu hình theo OpenAILLM
+        if config.active_provider not in config.providers:
+            from shared.llm.config import ProviderConfig
+            base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+            model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            config.providers[config.active_provider] = ProviderConfig(
+                model=model,
+                temperature=0.7,
+                timeout=30,
+                extra={"base_url": base_url},
+            )
 
         llm_instance = LLMFactory.create(config)
         logger.info("[AgentSetup] LLM Provider active: %s", config.active_provider)

@@ -16,6 +16,36 @@ providers:
         timeout: 30
         extra:
             base_url: https://api.groq.com/openai/v1
+    openrouter:
+        model: deepseek/deepseek-chat
+        temperature: 0.7
+        timeout: 30
+        extra:
+            base_url: https://openrouter.ai/api/v1
+    deepseek:
+        model: deepseek-chat
+        temperature: 0.7
+        timeout: 30
+        extra:
+            base_url: https://api.deepseek.com
+    qwen:
+        model: qwen-plus
+        temperature: 0.7
+        timeout: 30
+        extra:
+            base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+    google:
+        model: gemini-2.0-flash
+        temperature: 0.7
+        timeout: 30
+        extra:
+            base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    gemini:
+        model: gemini-2.0-flash
+        temperature: 0.7
+        timeout: 30
+        extra:
+            base_url: https://generativelanguage.googleapis.com/v1beta/openai/
     ollama:
         model: llama3.2
         temperature: 0.7

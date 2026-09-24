@@ -15,7 +15,7 @@ class LLMFactory:
         if provider_name == "mock":
             response = provider_config.extra.get("response", "Mock response from factory.")
             return MockLLM(response_content=response)
-        if provider_name in {"openai", "groq"}:
+        if provider_name in {"openai", "groq", "openrouter", "deepseek", "qwen", "google", "gemini"}:
             return OpenAILLM(provider_config)
         if provider_name == "ollama":
             return OllamaLLM(provider_config)

@@ -436,19 +436,66 @@ async function loadSettings() {
   const mEl = document.getElementById("settingModel");
   const noticeEl = document.getElementById("apiKeyNotice");
 
+  const PROVIDER_METADATA = {
+    groq: {
+      model: "openai/gpt-oss-120b",
+      placeholder: "Dán Groq API Key (bắt đầu bằng gsk_...)",
+    },
+    openrouter: {
+      model: "deepseek/deepseek-chat",
+      placeholder: "Dán OpenRouter API Key (bắt đầu bằng sk-or-...)",
+    },
+    google: {
+      model: "gemini-2.0-flash",
+      placeholder: "Dán Google AI Studio API Key (bắt đầu bằng AIza...)",
+    },
+    deepseek: {
+      model: "deepseek-chat",
+      placeholder: "Dán DeepSeek API Key (bắt đầu bằng sk-...)",
+    },
+    qwen: {
+      model: "qwen-plus",
+      placeholder: "Dán DashScope / Qwen API Key (bắt đầu bằng sk-...)",
+    },
+    openai: {
+      model: "gpt-4o-mini",
+      placeholder: "Dán OpenAI API Key (bắt đầu bằng sk-...)",
+    },
+    ollama: {
+      model: "llama3.2",
+      placeholder: "Tùy chọn (để trống nếu chạy local)",
+    },
+  };
+
   // Listener to change model default based on selected provider
   if (pEl && mEl) {
     pEl.addEventListener("change", () => {
       const selected = pEl.value;
-      if (selected === "groq") {
-        mEl.value = "openai/gpt-oss-120b";
-        if (kEl) kEl.placeholder = "Dán Groq API Key (bắt đầu bằng gsk_...)";
-      } else if (selected === "openai") {
-        mEl.value = "gpt-4o-mini";
-        if (kEl) kEl.placeholder = "Dán OpenAI API Key (bắt đầu bằng sk-...)";
-      } else if (selected === "ollama") {
-        mEl.value = "llama3.2";
-        if (kEl) kEl.placeholder = "Tùy chọn (để trống nếu chạy local)";
+      if (PROVIDER_METADATA[selected]) {
+        mEl.value = PROVIDER_METADATA[selected].model;
+        if (kEl) kEl.placeholder = PROVIDER_METADATA[selected].placeholder;
+      }
+    });
+  }
+
+  // Auto-detect provider when user pastes or types an API Key
+  if (kEl && pEl && mEl) {
+    kEl.addEventListener("input", () => {
+      const val = kEl.value.trim();
+      let detected = null;
+      if (val.startsWith("gsk_")) {
+        detected = "groq";
+      } else if (val.startsWith("sk-or-")) {
+        detected = "openrouter";
+      } else if (val.startsWith("AIza")) {
+        detected = "google";
+      }
+      if (detected && detected !== pEl.value) {
+        pEl.value = detected;
+        if (PROVIDER_METADATA[detected]) {
+          mEl.value = PROVIDER_METADATA[detected].model;
+          kEl.placeholder = PROVIDER_METADATA[detected].placeholder;
+        }
       }
     });
   }

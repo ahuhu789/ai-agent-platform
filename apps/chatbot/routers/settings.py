@@ -18,6 +18,52 @@ ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 ENV_PATH = ROOT_DIR / ".env"
 
 
+PROVIDER_DEFAULTS = {
+    "groq": {
+        "name": "Groq Cloud",
+        "default_model": "openai/gpt-oss-120b",
+        "default_base_url": "https://api.groq.com/openai/v1",
+        "key_env": "GROQ_API_KEY",
+    },
+    "openrouter": {
+        "name": "OpenRouter",
+        "default_model": "deepseek/deepseek-chat",
+        "default_base_url": "https://openrouter.ai/api/v1",
+        "key_env": "OPENROUTER_API_KEY",
+    },
+    "google": {
+        "name": "Google AI Studio",
+        "default_model": "gemini-2.0-flash",
+        "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "key_env": "GEMINI_API_KEY",
+    },
+    "deepseek": {
+        "name": "DeepSeek",
+        "default_model": "deepseek-chat",
+        "default_base_url": "https://api.deepseek.com",
+        "key_env": "DEEPSEEK_API_KEY",
+    },
+    "qwen": {
+        "name": "Qwen API (Alibaba DashScope)",
+        "default_model": "qwen-plus",
+        "default_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "key_env": "DASHSCOPE_API_KEY",
+    },
+    "openai": {
+        "name": "OpenAI",
+        "default_model": "gpt-4o-mini",
+        "default_base_url": "https://api.openai.com/v1",
+        "key_env": "OPENAI_API_KEY",
+    },
+    "ollama": {
+        "name": "Ollama (Local LLM)",
+        "default_model": "llama3.2",
+        "default_base_url": "http://localhost:11434/v1",
+        "key_env": "OLLAMA_API_KEY",
+    },
+}
+
+
 def _mask_api_key(key: str) -> str:
     """Ẩn phần lớn ký tự của API Key để bảo mật hiển thị."""
     if not key:
@@ -52,10 +98,31 @@ def _read_env_key(key_name: str) -> str:
 )
 def get_settings():
     """Trả về trạng thái cấu hình LLM hiện tại (đã che API Key)."""
-    api_key = _read_env_key("OPENAI_API_KEY") or _read_env_key("GROQ_API_KEY")
-    provider = _read_env_key("LLM_PROVIDER") or ("groq" if api_key.startswith("gsk_") else "openai")
-    model = _read_env_key("OPENAI_MODEL") or ("openai/gpt-oss-120b" if provider == "groq" else "gpt-4o-mini")
-    base_url = _read_env_key("OPENAI_BASE_URL") or ("https://api.groq.com/openai/v1" if provider == "groq" else "https://api.openai.com/v1")
+    api_key = (
+        _read_env_key("OPENAI_API_KEY")
+        or _read_env_key("GROQ_API_KEY")
+        or _read_env_key("OPENROUTER_API_KEY")
+        or _read_env_key("DEEPSEEK_API_KEY")
+        or _read_env_key("DASHSCOPE_API_KEY")
+        or _read_env_key("GEMINI_API_KEY")
+    )
+    provider = _read_env_key("LLM_PROVIDER")
+    if not provider:
+        if api_key.startswith("gsk_"):
+            provider = "groq"
+        elif api_key.startswith("sk-or-"):
+            provider = "openrouter"
+        elif api_key.startswith("AIzaSy"):
+            provider = "google"
+        else:
+            provider = "openai"
+
+    if provider == "gemini":
+        provider = "google"
+
+    info = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS["openai"])
+    model = _read_env_key("OPENAI_MODEL") or info["default_model"]
+    base_url = _read_env_key("OPENAI_BASE_URL") or info["default_base_url"]
 
     return schemas.SettingsResponse(
         success=True,
@@ -79,32 +146,49 @@ def save_settings(payload: schemas.SettingsUpdateRequest):
     cập nhật os.environ và reload Agent Setup trong bộ nhớ ngay lập tức.
     """
     raw_key = (payload.api_key or "").strip()
-    provider = (payload.provider or "groq").lower().strip()
+    raw_provider = (payload.provider or "").lower().strip()
+    if raw_provider == "gemini":
+        raw_provider = "google"
+
     model = (payload.model or "").strip()
     base_url = (payload.base_url or "").strip()
 
     # Nếu người dùng không nhập key mới và trong .env đã có key thì giữ lại key cũ
-    existing_key = _read_env_key("OPENAI_API_KEY") or _read_env_key("GROQ_API_KEY")
+    existing_key = (
+        _read_env_key("OPENAI_API_KEY")
+        or _read_env_key("GROQ_API_KEY")
+        or _read_env_key("OPENROUTER_API_KEY")
+        or _read_env_key("DEEPSEEK_API_KEY")
+        or _read_env_key("DASHSCOPE_API_KEY")
+        or _read_env_key("GEMINI_API_KEY")
+    )
     api_key = raw_key if raw_key else existing_key
 
-    # Tự động nhận diện provider & model chuẩn nếu dùng Groq (gsk_...) hoặc OpenAI
-    if provider == "groq" or api_key.startswith("gsk_"):
+    # Tự động nhận diện provider nếu người dùng dán key có prefix đặc trưng
+    if api_key.startswith("sk-or-") and raw_provider in ("", "groq", "openai"):
+        provider = "openrouter"
+    elif api_key.startswith("AIza") and raw_provider in ("", "groq", "openai"):
+        provider = "google"
+    elif api_key.startswith("gsk_") and raw_provider in ("", "openai"):
         provider = "groq"
-        if not model:
-            model = "openai/gpt-oss-120b"
-        if not base_url:
-            base_url = "https://api.groq.com/openai/v1"
-    elif provider == "openai" or api_key.startswith("sk-"):
-        provider = "openai"
-        if not model:
-            model = "gpt-4o-mini"
-        if not base_url:
-            base_url = "https://api.openai.com/v1"
+    elif raw_provider:
+        provider = raw_provider
     else:
-        if not model:
-            model = "openai/gpt-oss-120b"
-        if not base_url:
-            base_url = "https://api.groq.com/openai/v1"
+        provider = "groq"
+
+    # Lấy thông tin mặc định cho provider đã chọn
+    info = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS["groq"])
+    if not model:
+        model = info["default_model"]
+    if not base_url:
+        base_url = info["default_base_url"]
+
+    # Đọc hoặc gán các provider keys tương ứng
+    groq_key = api_key if provider == "groq" else _read_env_key("GROQ_API_KEY")
+    openrouter_key = api_key if provider == "openrouter" else _read_env_key("OPENROUTER_API_KEY")
+    deepseek_key = api_key if provider == "deepseek" else _read_env_key("DEEPSEEK_API_KEY")
+    dashscope_key = api_key if provider == "qwen" else _read_env_key("DASHSCOPE_API_KEY")
+    gemini_key = api_key if provider == "google" else _read_env_key("GEMINI_API_KEY")
 
     # Tạo nội dung file .env chuẩn theo cấu trúc dự án
     env_content = (
@@ -114,11 +198,16 @@ def save_settings(payload: schemas.SettingsUpdateRequest):
         "# =====================================================================\n\n"
         "# 1. Cấu hình LLM Provider (LLMFactory)\n"
         f"LLM_PROVIDER={provider}\n"
-        f"GROQ_API_KEY={api_key}\n"
         f"OPENAI_API_KEY={api_key}\n"
         f"OPENAI_BASE_URL={base_url}\n"
         f"OPENAI_MODEL={model}\n"
         "OPENAI_TIMEOUT=30\n\n"
+        "# Provider-specific API Keys\n"
+        f"GROQ_API_KEY={groq_key}\n"
+        f"OPENROUTER_API_KEY={openrouter_key}\n"
+        f"DEEPSEEK_API_KEY={deepseek_key}\n"
+        f"DASHSCOPE_API_KEY={dashscope_key}\n"
+        f"GEMINI_API_KEY={gemini_key}\n\n"
         "# 2. Cấu hình Memory & Cache\n"
         "MEMORY_PROVIDER=in_memory\n"
         "REDIS_URL=redis://localhost:6379/0\n\n"
@@ -136,15 +225,20 @@ def save_settings(payload: schemas.SettingsUpdateRequest):
         # Ghi trực tiếp vào file .env tại thư mục gốc
         with open(ENV_PATH, "w", encoding="utf-8") as f:
             f.write(env_content)
-        logger.info("[Settings] Successfully wrote updated .env to %s", ENV_PATH)
+        logger.info("[Settings] Successfully wrote updated .env to %s (provider=%s, model=%s)", ENV_PATH, provider, model)
 
         # Cập nhật biến môi trường runtime
         os.environ["LLM_PROVIDER"] = provider
-        os.environ["GROQ_API_KEY"] = api_key
         os.environ["OPENAI_API_KEY"] = api_key
         os.environ["OPENAI_BASE_URL"] = base_url
         os.environ["OPENAI_MODEL"] = model
         os.environ["OPENAI_TIMEOUT"] = "30"
+
+        if groq_key: os.environ["GROQ_API_KEY"] = groq_key
+        if openrouter_key: os.environ["OPENROUTER_API_KEY"] = openrouter_key
+        if deepseek_key: os.environ["DEEPSEEK_API_KEY"] = deepseek_key
+        if dashscope_key: os.environ["DASHSCOPE_API_KEY"] = dashscope_key
+        if gemini_key: os.environ["GEMINI_API_KEY"] = gemini_key
 
         # Tải lại RootAgent & DomainAgents trong bộ nhớ
         reload_agent_setup()

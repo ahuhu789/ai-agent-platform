@@ -94,3 +94,110 @@ def test_save_settings_auto_detect_groq_prefix(client):
     env_content = ENV_PATH.read_text(encoding="utf-8")
     assert "LLM_PROVIDER=groq" in env_content
     assert "OPENAI_MODEL=openai/gpt-oss-120b" in env_content
+
+
+def test_save_settings_openrouter(client):
+    """Kiểm tra cấu hình OpenRouter."""
+    test_key = "sk-or-v1-abcdef1234567890"
+    payload = {
+        "provider": "openrouter",
+        "api_key": test_key,
+        "model": "deepseek/deepseek-chat",
+    }
+    response = client.post("/settings", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["provider"] == "openrouter"
+    assert data["model"] == "deepseek/deepseek-chat"
+    assert data["base_url"] == "https://openrouter.ai/api/v1"
+
+    env_content = ENV_PATH.read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=openrouter" in env_content
+    assert f"OPENROUTER_API_KEY={test_key}" in env_content
+    assert f"OPENAI_API_KEY={test_key}" in env_content
+    assert "OPENAI_BASE_URL=https://openrouter.ai/api/v1" in env_content
+    assert "OPENAI_MODEL=deepseek/deepseek-chat" in env_content
+
+
+def test_save_settings_google_ai_studio(client):
+    """Kiểm tra cấu hình Google AI Studio (Gemini)."""
+    test_key = "AIzaSyTestGoogleKey123456789"
+    payload = {
+        "provider": "google",
+        "api_key": test_key,
+        "model": "gemini-2.0-flash",
+    }
+    response = client.post("/settings", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["provider"] == "google"
+    assert data["model"] == "gemini-2.0-flash"
+    assert "generativelanguage.googleapis.com" in data["base_url"]
+
+    env_content = ENV_PATH.read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=google" in env_content
+    assert f"GEMINI_API_KEY={test_key}" in env_content
+    assert "OPENAI_MODEL=gemini-2.0-flash" in env_content
+
+
+def test_save_settings_deepseek(client):
+    """Kiểm tra cấu hình DeepSeek API."""
+    test_key = "sk-deepseek-test-999888777"
+    payload = {
+        "provider": "deepseek",
+        "api_key": test_key,
+        "model": "deepseek-chat",
+    }
+    response = client.post("/settings", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["provider"] == "deepseek"
+    assert data["model"] == "deepseek-chat"
+    assert data["base_url"] == "https://api.deepseek.com"
+
+    env_content = ENV_PATH.read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=deepseek" in env_content
+    assert f"DEEPSEEK_API_KEY={test_key}" in env_content
+    assert "OPENAI_BASE_URL=https://api.deepseek.com" in env_content
+
+
+def test_save_settings_qwen(client):
+    """Kiểm tra cấu hình Qwen API (DashScope)."""
+    test_key = "sk-dashscope-test-888777666"
+    payload = {
+        "provider": "qwen",
+        "api_key": test_key,
+        "model": "qwen-plus",
+    }
+    response = client.post("/settings", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["provider"] == "qwen"
+    assert data["model"] == "qwen-plus"
+    assert "dashscope" in data["base_url"]
+
+    env_content = ENV_PATH.read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=qwen" in env_content
+    assert f"DASHSCOPE_API_KEY={test_key}" in env_content
+    assert "OPENAI_MODEL=qwen-plus" in env_content
+
+
+def test_save_settings_auto_detect_openrouter_prefix(client):
+    """Kiểm tra tự động nhận diện OpenRouter khi API key có tiền tố sk-or-."""
+    test_key = "sk-or-v1-auto-detected-key"
+    payload = {
+        "provider": "",
+        "api_key": test_key,
+        "model": "",
+    }
+    response = client.post("/settings", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["provider"] == "openrouter"
+    assert data["model"] == "deepseek/deepseek-chat"
+
