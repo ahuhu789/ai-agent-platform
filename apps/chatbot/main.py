@@ -5,7 +5,13 @@ Entry point Chat API. Chạy độc lập:
 
 Swagger UI: http://localhost:8000/docs
 """
+import logging
 import os
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+logging.getLogger("httpx").setLevel(logging.INFO)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

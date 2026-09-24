@@ -5,6 +5,11 @@ from .exceptions import LLMConnectionError, LLMProviderError, LLMTimeoutError
 from .interface import LLM, LLMRequest, LLMResponse
 
 
+from shared.logger import setup_logger
+
+logger = setup_logger("fme.llm.openai")
+
+
 class OpenAILLM(LLM):
     """
     Provider kết nối tới OpenAI hoặc bất kỳ API tương thích OpenAI nào (Groq, DeepSeek, v.v.).
@@ -35,6 +40,21 @@ class OpenAILLM(LLM):
                 "Chưa cấu hình API Key. Vui lòng thiết lập OPENAI_API_KEY (hoặc biến môi trường tương ứng của provider) hoặc config.extra.api_key"
             )
 
+        self.base_url = base_url
+        self.provider_name = os.getenv("LLM_PROVIDER", "openai").lower()
+        if "groq.com" in (base_url or "").lower() or self.provider_name == "groq":
+            self.display_provider = "Groq"
+        elif "openrouter.ai" in (base_url or "").lower() or self.provider_name == "openrouter":
+            self.display_provider = "OpenRouter"
+        elif "deepseek.com" in (base_url or "").lower() or self.provider_name == "deepseek":
+            self.display_provider = "DeepSeek"
+        elif "dashscope" in (base_url or "").lower() or self.provider_name in ("qwen", "dashscope"):
+            self.display_provider = "Qwen"
+        elif "googleapis.com" in (base_url or "").lower() or self.provider_name in ("google", "gemini"):
+            self.display_provider = "Google AI Studio"
+        else:
+            self.display_provider = "OpenAI"
+
         client_kwargs = {
             "api_key": api_key,
             "timeout": timeout,
@@ -59,6 +79,10 @@ class OpenAILLM(LLM):
         if request.max_tokens is not None:
             kwargs["max_tokens"] = request.max_tokens
 
+        url_endpoint = f"{self.base_url.rstrip('/') if self.base_url else 'https://api.openai.com/v1'}/chat/completions"
+        logger.info("[LLM] generate() được gọi (provider=%s, model=%s)", self.display_provider.lower(), model)
+        logger.info("[%s Provider] Đang gửi HTTP POST tới %s (model=%s)", self.display_provider, url_endpoint, model)
+
         try:
             response = self.client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content or ""
@@ -69,13 +93,15 @@ class OpenAILLM(LLM):
                     "completion_tokens": response.usage.completion_tokens,
                     "total_tokens": response.usage.total_tokens,
                 }
+            logger.info("[%s Provider] Nhận phản hồi thành công từ %s (status=200, tokens=%s)", self.display_provider, self.display_provider, usage)
             return LLMResponse(
                 content=content,
                 model=model,
                 usage=usage,
-                metadata={"provider": "openai", "system_fingerprint": getattr(response, "system_fingerprint", None)},
+                metadata={"provider": self.display_provider.lower(), "system_fingerprint": getattr(response, "system_fingerprint", None)},
             )
         except Exception as error:
+            logger.error("[%s Provider] Lỗi HTTP khi gọi %s API: %s", self.display_provider, self.display_provider, error)
             text = str(error).lower()
             if "timeout" in text:
                 raise LLMTimeoutError(f"OpenAI request timed out: {error}") from error

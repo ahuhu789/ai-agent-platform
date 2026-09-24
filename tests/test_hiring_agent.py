@@ -76,3 +76,71 @@ def test_agent_general_query(agent):
     res = agent.handle(req)
     assert res.success is True
     assert "Trợ lý Tuyển dụng" in res.data["response"]
+
+
+from shared.abstractions.llm import BaseLLM, LLMRequest, LLMResponse
+
+
+class SpyLLM(BaseLLM):
+    """Spy LLM để kiểm chứng Domain Agent thực sự gọi LLM abstraction qua DI."""
+
+    def __init__(self, response_content: str = "Câu trả lời tổng hợp từ SpyLLM."):
+        self.response_content = response_content
+        self.calls = []
+        self.is_mock = False  # Báo hiệu đây là LLM thực tế được inject
+        self.config = type("Config", (), {"model": "openai/gpt-oss-120b"})()
+
+    def generate(self, request: LLMRequest) -> LLMResponse:
+        self.calls.append(request)
+        return LLMResponse(
+            content=self.response_content,
+            model=request.model,
+            metadata={"provider": "spy"},
+        )
+
+
+def test_hiring_agent_uses_injected_llm_for_synthesis():
+    """Kiểm tra: Domain Agent nhận LLM qua DI và thực sự gọi llm.generate() để tổng hợp kết quả."""
+    spy_llm = SpyLLM(response_content="### Danh sách tổng hợp bởi LLM")
+    agent = HiringAgent(llm=spy_llm)
+
+    assert agent.llm is spy_llm
+    assert agent.model_name == "openai/gpt-oss-120b"
+
+    req = AgentRequest(message="Danh sách ứng viên đang đợi phỏng vấn")
+    res = agent.handle(req)
+
+    assert res.success is True
+    assert res.data["tool_used"] == "search_candidates"
+    # Chứng minh response được sinh từ LLM chứ không phải template fallback
+    assert "### Danh sách tổng hợp bởi LLM" in res.data["response"]
+    # Chứng minh llm.generate() đã thực sự được invoke trong execution flow
+    assert len(spy_llm.calls) >= 1
+    # Ít nhất một cuộc gọi là cho synthesis
+    synthesis_call = spy_llm.calls[-1]
+    assert any("search_candidates" in m["content"] for m in synthesis_call.messages)
+
+
+class FailingLLM(BaseLLM):
+    """LLM giả lập lỗi API để kiểm tra cơ chế error handling & fallback."""
+
+    def __init__(self):
+        self.is_mock = False
+        self.config = type("Config", (), {"model": "openai/gpt-oss-120b"})()
+
+    def generate(self, request: LLMRequest) -> LLMResponse:
+        raise RuntimeError("API Timeout / Network error")
+
+
+def test_hiring_agent_fallback_when_llm_fails():
+    """Kiểm tra: Khi LLM lỗi, Agent không crash mà ghi nhận và fallback sang template có dữ liệu."""
+    failing_llm = FailingLLM()
+    agent = HiringAgent(llm=failing_llm)
+
+    req = AgentRequest(message="Danh sách ứng viên đang đợi phỏng vấn")
+    res = agent.handle(req)
+
+    assert res.success is True
+    assert res.data["tool_used"] == "search_candidates"
+    # Phải có dữ liệu ứng viên từ MCP tool dù LLM lỗi
+    assert "UV001" in res.data["response"]

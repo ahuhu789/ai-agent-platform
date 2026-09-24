@@ -16,7 +16,10 @@ except ImportError:
 from shared.abstractions.agent import AgentRequest, AgentResponse, BaseAgent
 from shared.abstractions.llm import BaseLLM, LLMRequest
 from mcp_servers.attendance.tools import AttendanceTools
+from shared.logger import setup_logger
 from .prompts import ATTENDANCE_AGENT_SYSTEM_PROMPT, INTENT_EXTRACTION_PROMPT
+
+logger = setup_logger("fme.agent.attendance")
 
 
 def strip_diacritics(text: str) -> str:
@@ -45,7 +48,8 @@ class AttendanceAgent(BaseAgent):
         self.tools = tools or AttendanceTools()
         self.llm = llm
         self.openai_client = openai_client
-        self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        injected_model = getattr(getattr(llm, "config", None), "model", None)
+        self.model_name = model_name or injected_model or os.getenv("OPENAI_MODEL", "openai/gpt-oss-120b")
 
         self._tool_dispatch: Dict[str, Callable] = {
             "get_monthly_attendance": self.tools.get_monthly_attendance,
@@ -65,8 +69,11 @@ class AttendanceAgent(BaseAgent):
                 metadata={"source": "attendance", "agent": self.name},
             )
 
+        logger.info("[DomainAgent:Attendance] Bắt đầu xử lý request. LLM object tồn tại: %s, Class: %s", self.llm is not None, type(self.llm).__name__ if self.llm else "None")
+
         try:
             # 1. Parse intent & extract tool + parameters
+            logger.info("[DomainAgent:Attendance] Bắt đầu intent classification cho message: '%s'", message)
             plan = self._extract_intent(message, request.context)
 
             # 2. Check if we need more clarification
@@ -82,12 +89,17 @@ class AttendanceAgent(BaseAgent):
             params = plan.get("parameters", {})
 
             if not tool_name or tool_name not in self._tool_dispatch:
+                logger.info("[DomainAgent:Attendance] Không khớp tool cụ thể, xử lý bằng general query.")
                 return self._handle_general_query(message)
 
             # 3. Execute tool
+            logger.info("[DomainAgent:Attendance] Bắt đầu tool selection: đã chọn tool '%s' với params=%s", tool_name, params)
+            logger.info("[DomainAgent:Attendance] Bắt đầu MCP tool call '%s'...", tool_name)
             tool_result = self._execute_tool(tool_name, params)
+            logger.info("[DomainAgent:Attendance] Nhận kết quả từ MCP tool '%s': success=%s", tool_name, tool_result.get("success", False))
 
             # 4. Synthesize natural language response
+            logger.info("[DomainAgent:Attendance] Bắt đầu response synthesis bằng LLM...")
             synthesized_answer = self._synthesize_response(message, tool_name, params, tool_result)
 
             return AgentResponse(
@@ -118,9 +130,17 @@ class AttendanceAgent(BaseAgent):
         """Extract tool and parameters using LLM or rule-based fallback."""
         if (self.llm and not getattr(self.llm, "is_mock", False)) or self.openai_client:
             try:
-                return self._extract_intent_with_llm(message, context)
-            except Exception:
-                pass
+                logger.info("[DomainAgent:Attendance] Thực hiện trích xuất intent qua LLM (model=%s)...", self.model_name)
+                plan = self._extract_intent_with_llm(message, context)
+                # Nếu LLM yêu cầu thêm thông tin cho các câu hỏi tổng hợp (VD: "Ai đi trễ nhiều nhất?"), fallback sang rule-based
+                if plan.get("needs_more_info") and any(k in message.lower() for k in ["ai đi trễ", "ai muon", "ai muộn", "đi trễ nhiều nhất", "trễ nhiều nhất", "ai vắng", "vắng nhiều nhất"]):
+                    logger.info("[DomainAgent:Attendance] LLM yêu cầu thêm thông tin cho câu hỏi aggregate, chuyển sang rule-based với default ALL.")
+                    return self._extract_intent_rule_based(message, context)
+                logger.info("[DomainAgent:Attendance] Trích xuất intent qua LLM thành công: %s", plan)
+                return plan
+            except Exception as exc:
+                logger.warning("[DomainAgent:Attendance] Lỗi khi trích xuất intent qua LLM: %s. Fallback sang rule-based.", exc)
+        logger.info("[DomainAgent:Attendance] Sử dụng rule-based matcher để trích xuất intent.")
         return self._extract_intent_rule_based(message, context)
 
     def _extract_intent_with_llm(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -315,9 +335,14 @@ class AttendanceAgent(BaseAgent):
         """Synthesize tool result into user-facing response."""
         if (self.llm and not getattr(self.llm, "is_mock", False)) or self.openai_client:
             try:
-                return self._synthesize_response_with_llm(message, tool_name, parameters, tool_result)
-            except Exception:
-                pass
+                logger.info("[DomainAgent:Attendance] Gọi self.llm.generate() để tổng hợp câu trả lời...")
+                ans = self._synthesize_response_with_llm(message, tool_name, parameters, tool_result)
+                if ans and ans.strip():
+                    logger.info("[DomainAgent:Attendance] LLM tổng hợp câu trả lời thành công.")
+                    return ans.strip()
+            except Exception as exc:
+                logger.warning("[DomainAgent:Attendance] Lỗi khi tổng hợp câu trả lời qua LLM: %s. Fallback sang template format.", exc)
+        logger.info("[DomainAgent:Attendance] Sử dụng template fallback format.")
         return self._synthesize_response_template(tool_name, parameters, tool_result)
 
     def _synthesize_response_with_llm(
@@ -328,45 +353,71 @@ class AttendanceAgent(BaseAgent):
         tool_result: Dict[str, Any],
     ) -> str:
         """Call LLM or OpenAI client to format natural response."""
+        data = tool_result.get("data") or {}
         system_prompt = (
             "Bạn là Trợ lý Chuyên cần (Attendance Agent) thông minh, chuyên nghiệp của hệ thống FME.\n"
-            "Nhiệm vụ: Dựa vào DỮ LIỆU THỰC TẾ từ Tool vừa gọi để trả lời người dùng một cách chính xác, tự nhiên bằng tiếng Việt.\n"
+            "Nhiệm vụ: Dựa vào DỮ LIỆU THỰC TẾ từ Tool vừa gọi để trả lời người dùng một cách chính xác, tự nhiên bằng tiếng Việt.\n\n"
             "QUY TẮC ĐỊNH DẠNG BẮT BUỘC:\n"
-            "- Với chi tiết 1 cá nhân (như số ngày đi làm, thống kê đi trễ cá nhân): Trình bày dạng chi tiết / card rõ ràng với các mục bullet points. BẮT BUỘC ghi rõ Mã nhân viên (ví dụ: `NV001`), Họ và tên, Số ngày làm việc hoặc số lần trễ. KHÔNG ép thành bảng 1 dòng.\n"
-            "- Khi kết quả là danh sách từ 2 bản ghi trở lên (lịch sử chuyên cần nhiều ngày, bảng xếp hạng đi trễ/vắng mặt nhiều nhân viên...): BẮT BUỘC dùng bảng Markdown (Markdown Table) chuẩn. Cột đầu tiên là STT, tiếp đến Mã NV / Ngày, rồi đến các thông tin.\n"
-            "- Bảng có tiêu đề ngắn gọn (dùng ###). Cột số liệu (STT, số lần trễ, số phút, ngày nghỉ) phải căn phải (|---:|), các cột khác căn trái (|---|).\n"
-            "- Sau bảng có MỘT dòng tổng kết ngắn gọn (ví dụ: **Tổng số:** X bản ghi.), KHÔNG lặp lại toàn bộ dữ liệu bên dưới.\n"
-            "- Tuyệt đối KHÔNG escape ký tự gạch đứng | thành \\| trong bảng.\n"
-            "- Tuyệt đối KHÔNG escape ký tự @ trong email thành \\@.\n"
-            "- Không tự thêm quá nhiều emoji hoặc định dạng rườm rà không cần thiết.\n"
-            "- Tuyệt đối không bịa đặt dữ liệu ngoài thông tin do Tool cung cấp."
+            "1. VỚI THÔNG TIN CHUYÊN CẦN CÁ NHÂN (get_monthly_attendance): Trình bày dạng card rõ ràng với bullet points, BẮT BUỘC đầy đủ các mục:\n"
+            "  - Nhân viên: Họ tên (Mã NV)\n"
+            "  - Số ngày đi làm thực tế: X / Y ngày\n"
+            "  - Số lần đi trễ: X lần\n"
+            "  - Số ngày vắng mặt: X ngày\n"
+            "  - Tỷ lệ chuyên cần: X%\n\n"
+            "2. VỚI THỐNG KÊ ĐI TRỄ / VẮNG MẶT CÁ NHÂN (get_late_arrival_summary): Trình bày card số lần, tổng phút trễ và chi tiết ngày trễ (nếu có).\n\n"
+            "3. VỚI TRUY VẤN TỔNG HỢP / TẬP THỂ / TOÀN CÔNG TY (VD: 'Ai đi trễ nhiều nhất?', bảng thống kê): BẮT BUỘC có câu kết luận ai trễ nhiều nhất, VÀ NGAY SAU ĐÓ BẮT BUỘC CÓ TIÊU ĐỀ (###) KÈM BẢNG MARKDOWN CHUẨN:\n"
+            "  | STT | Mã NV | Họ và tên | Số lần trễ | Tổng phút trễ |\n"
+            "  Cột STT, Số lần trễ và Tổng phút trễ căn phải (|---:|).\n\n"
+            "4. KÝ TỰ: Tuyệt đối KHÔNG escape gạch đứng | thành \\| và KHÔNG escape email @ thành \\@."
         )
-        prompt = (
-            f"{system_prompt}\n\n"
-            f"Câu hỏi của người dùng: {message}\n"
+        user_prompt = (
+            f"Câu hỏi của người dùng: {message}\n\n"
             f"Công cụ MCP đã gọi: {tool_name}\n"
             f"Tham số: {json.dumps(parameters, ensure_ascii=False)}\n"
             f"Kết quả trả về từ công cụ:\n{json.dumps(tool_result, ensure_ascii=False, indent=2)}\n\n"
             "Hãy trả lời câu hỏi của người dùng dựa trên kết quả trên một cách tự nhiên, rõ ràng, định dạng Markdown đẹp mắt."
         )
 
+        resp_text = None
         if self.llm and not getattr(self.llm, "is_mock", False):
-            req = LLMRequest(
-                messages=[{"role": "user", "content": prompt}],
-                model=self.model_name,
-                temperature=0.2,
-            )
-            resp = self.llm.generate(req)
-            if resp.content and resp.content.strip():
-                return resp.content.strip()
+            try:
+                req = LLMRequest(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    model=self.model_name,
+                    temperature=0.2,
+                )
+                resp = self.llm.generate(req)
+                if resp.content and resp.content.strip():
+                    resp_text = resp.content.strip()
+            except Exception as exc:
+                logger.warning("[DomainAgent:Attendance] Lỗi LLM synthesis: %s. Fallback.", exc)
 
-        if self.openai_client:
-            response = self.openai_client.chat.completions.create(
-                model=self.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-            )
-            return response.choices[0].message.content
+        elif self.openai_client:
+            try:
+                response = self.openai_client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.2,
+                )
+                content = response.choices[0].message.content
+                if content and content.strip():
+                    resp_text = content.strip()
+            except Exception as exc:
+                logger.warning("[DomainAgent:Attendance] Lỗi OpenAI synthesis: %s", exc)
+
+        if resp_text:
+            # Safeguard: if aggregate late arrival query lacks table, append template table
+            if tool_name == "get_late_arrival_summary" and parameters.get("employee_id") == "ALL":
+                if "| STT" not in resp_text and "| Mã NV" not in resp_text:
+                    table_md = self._synthesize_response_template(tool_name, parameters, tool_result)
+                    resp_text = f"{resp_text}\n\n{table_md}"
+            return resp_text
 
         return self._synthesize_response_template(tool_name, parameters, tool_result)
 

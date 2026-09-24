@@ -2,6 +2,9 @@ import unicodedata
 
 from shared.abstractions.agent import AgentRequest, AgentResponse, BaseAgent
 from agents.root.agent_registry import AgentRegistry
+from shared.logger import setup_logger
+
+logger = setup_logger("fme.agent.root")
 
 
 def strip_diacritics(text: str) -> str:
@@ -88,6 +91,7 @@ class RootAgent(BaseAgent):
         self.registry = registry
 
     def handle(self, request: AgentRequest) -> AgentResponse:
+        logger.info("[RootAgent] Nhận request: '%s'", request.message)
         intent = classify_intent(request.message)
 
         # Hỗ trợ đa lượt (Multi-turn Context): nếu câu hỏi là lượt tiếp nối (follow-up)
@@ -117,6 +121,7 @@ class RootAgent(BaseAgent):
                         intent = last_agent
 
         if intent is None:
+            logger.info("[RootAgent] Không nhận diện được intent từ câu hỏi.")
             return AgentResponse(
                 success=False,
                 error="Xin lỗi, tôi chưa hiểu câu hỏi này thuộc phân hệ nào "
@@ -124,12 +129,14 @@ class RootAgent(BaseAgent):
                 metadata={"source": "root_agent", "intent": None},
             )
 
+        logger.info("[RootAgent] Đã phân loại intent='%s', route sang DomainAgent '%s'", intent, intent)
         target_agent = self.registry.get(intent)
 
         if target_agent is None:
             # Trường hợp classify_intent nhận diện đúng phân hệ, nhưng chưa có
             # Agent nào được đăng ký cho phân hệ đó (vd đồng đội chưa xong Agent thật
             # và cũng chưa đăng ký Mock Agent thay thế).
+            logger.warning("[RootAgent] Phân hệ '%s' chưa được đăng ký trong registry.", intent)
             return AgentResponse(
                 success=False,
                 error=f"Phân hệ '{intent}' hiện chưa sẵn sàng.",

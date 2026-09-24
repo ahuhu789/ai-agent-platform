@@ -21,6 +21,9 @@ function cleanMarkdownEscapes(text) {
   cleaned = cleaned.replace(/\\@/g, "@");
   // 3. Unescape markdown syntax if escaped: \* -> *, \_ -> _, \# -> #
   cleaned = cleaned.replace(/\\([\*_`~#\-+!])/g, "$1");
+  // 4. Strip leading indentation before headers and table lines (so marked doesn't treat them as code blocks)
+  cleaned = cleaned.replace(/^[ \t]+(#{1,6}\s)/gm, "$1");
+  cleaned = cleaned.replace(/^[ \t]+(\|)/gm, "$1");
   return cleaned;
 }
 
@@ -84,8 +87,14 @@ function fallbackRenderMarkdown(text) {
     let line = lines[i].trim();
 
     // Table line
-    if (line.startsWith("|") && line.endsWith("|")) {
-      const cells = line.slice(1, -1).split("|").map(c => c.trim());
+    if (line.startsWith("|")) {
+      let trimmedLine = line;
+      if (trimmedLine.endsWith("|")) {
+        trimmedLine = trimmedLine.slice(1, -1);
+      } else {
+        trimmedLine = trimmedLine.slice(1);
+      }
+      const cells = trimmedLine.split("|").map(c => c.trim());
       // Check if separator line (|---|---|)
       if (cells.every(c => /^:?-+:?$/.test(c))) {
         continue;
@@ -300,7 +309,7 @@ function startNewChat() {
 function renderMessageHistory(messages) {
   chatMessagesEl.innerHTML = "";
   messages.forEach((msg) => {
-    appendMessageToDOM(msg.role, msg.content);
+    appendMessageToDOM(msg.role, msg.content, msg.metadata);
   });
   scrollToBottom();
 }

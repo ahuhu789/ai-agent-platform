@@ -59,6 +59,8 @@ class ChatService:
             user_id=user_id,
         )
 
+        logger.info("[ChatService] Bắt đầu xử lý tin nhắn (user_id=%s, conv_id=%s): '%s'", user_id, active_conv_id, message)
+
         # 3. Lấy ngữ cảnh đa lượt từ Memory Store
         chat_context = self.memory_store.build_chat_context(active_conv_id, user_id=user_id)
 
@@ -101,6 +103,8 @@ class ChatService:
             agent_response_data=agent_response.data if isinstance(agent_response.data, dict) else {},
             metadata=agent_response.metadata,
         )
+
+        logger.info("[ChatService] Hoàn thành xử lý tin nhắn (success=%s, reply_length=%d)", agent_response.success, len(reply_text))
 
         # 7. Trả về kết quả
         return {

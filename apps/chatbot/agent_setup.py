@@ -53,6 +53,12 @@ def setup_llm() -> Optional[BaseLLM]:
     Khi chưa cấu hình API key, trả về None để các Agent chạy ở chế độ Rule-based
     và Template Formatter với đầy đủ dữ liệu thực tế thay vì trả về Mock response.
     """
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+    except ImportError:
+        pass
+
     config_path = Path(__file__).resolve().parent.parent.parent / "shared" / "llm" / "config.yaml"
     try:
         config = load_config(str(config_path))
@@ -98,7 +104,9 @@ def setup_llm() -> Optional[BaseLLM]:
             )
 
         llm_instance = LLMFactory.create(config)
-        logger.info("[AgentSetup] LLM Provider active: %s", config.active_provider)
+        active_p_config = config.providers.get(config.active_provider)
+        active_model = os.getenv("OPENAI_MODEL", getattr(active_p_config, "model", "default"))
+        logger.info("[AgentSetup] LLM Provider active: %s (model=%s)", config.active_provider, active_model)
         return llm_instance
     except Exception as e:
         logger.warning("[AgentSetup] Could not create LLM from config (%s). Falling back to rule-based.", e)
