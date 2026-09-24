@@ -1,4 +1,4 @@
-"""Interactive CLI Chat to test Hiring Agent with LLM API (OpenAI / DeepSeek / etc.)."""
+"""Interactive CLI Chat to test Multi-Agent Platform (Root Agent -> Hiring, Attendance, Employee)."""
 
 import io
 import os
@@ -15,36 +15,34 @@ if sys.platform == "win32":
 from dotenv import load_dotenv
 load_dotenv()
 
-from agents.hiring.hiring_agent import HiringAgent
+from apps.chatbot.agent_setup import root_agent, llm_provider
+from apps.chatbot.memory_store import memory_store
 from shared.abstractions.agent import AgentRequest
 
 
 def main():
-    agent = HiringAgent()
-
     print("=" * 70)
-    print("[HIRING AGENT] - CHAT INTERACTIVE")
+    print("AI AGENT PLATFORM - CHAT CLI INTERACTIVE")
     print("=" * 70)
 
-    if agent.openai_client:
-        print("[OK] Da ket noi LLM API thanh cong!")
-        print(f"   - Model: {agent.model_name}")
-        print(f"   - Base URL: {os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')}")
+    has_llm = llm_provider is not None and not getattr(llm_provider, "is_mock", False)
+    if has_llm:
+        print("[OK] Da ket noi LLM Provider thanh cong!")
     else:
-        print("[INFO] Chua co OPENAI_API_KEY trong file .env.")
-        print("   Agent dang chay o che do [Rule-based Fallback] thong minh.")
-        print("   -> Dien OPENAI_API_KEY vao file .env de kich hoat LLM.")
+        print("[INFO] He thong dang chay o che do [Rule-based & Template Formatter] thong minh.")
+        print("       (Day du du lieu thuc te tu MCP Servers, khong ton chi phi API).")
+        print("       -> Dien OPENAI_API_KEY vao file .env de kich hoat LLM sinh van tu nhien.")
 
-    print("\nGoi y cau hoi:")
-    print(" - Co bao nhieu ung vien dang cho phong van?")
-    print(" - Danh sach cac vi tri dang tuyen?")
-    print(" - Cho toi xem thong tin ung vien co ma UV001")
-    print(" - Lich phong van tuan nay?")
-    print(" - Bao cao tong quan tinh hinh tuyen dung")
+    print("\nGoi y cau hoi thu nghiem:")
+    print(" [Tuyển dụng]: 'Có bao nhiêu ứng viên đang chờ phỏng vấn?'")
+    print(" [Tuyển dụng]: 'Danh sách các vị trí đang tuyển?'")
+    print(" [Chuyên cần]: 'Tháng này nhân viên A đi làm bao nhiêu ngày?'")
+    print(" [Nhân sự]:    'Nhân viên A thuộc phòng ban nào?'")
+    print(" [Đa lượt]:    'Tháng này đi làm bao nhiêu ngày?' (Hệ thống tự nhớ Nhân viên A)")
     print("\n(Go 'exit' hoac 'quit' de thoat)")
     print("-" * 70)
 
-    conv_id = "cli_session_1"
+    conv_id = memory_store.create_conversation(title="CLI Session", user_id="admin")
     user_id = "admin"
 
     while True:
@@ -61,14 +59,34 @@ def main():
             print("Tam biet!")
             break
 
-        req = AgentRequest(message=user_msg, conversation_id=conv_id, user_id=user_id)
-        res = agent.handle(req)
+        # Lưu tin nhắn user
+        memory_store.save_message(conv_id, role="user", content=user_msg, user_id=user_id)
+        chat_context = memory_store.build_chat_context(conv_id, user_id=user_id)
 
+        req = AgentRequest(message=user_msg, conversation_id=conv_id, user_id=user_id, context=chat_context)
+        res = root_agent.handle(req)
+
+        intent = res.metadata.get("intent") or res.metadata.get("source") or "Unknown"
         tool_used = res.metadata.get("tool_used") or "None"
-        mode = "LLM" if agent.openai_client else "Rule-based"
+        mode = "LLM" if has_llm else "Rule-based"
 
-        print(f"\n[AGENT] [{mode} | Tool: {tool_used}]:")
-        print(res.data.get("response", res.error or "Khong co phan hoi."))
+        reply_text = ""
+        if res.success and res.data:
+            reply_text = res.data.get("response") or str(res.data)
+        else:
+            reply_text = res.error or "Khong co phan hoi."
+
+        memory_store.save_message(conv_id, role="assistant", content=reply_text, metadata=res.metadata, user_id=user_id)
+        memory_store.track_interaction(
+            conversation_id=conv_id,
+            user_id=user_id,
+            user_message=user_msg,
+            agent_response_data=res.data if isinstance(res.data, dict) else {},
+            metadata=res.metadata,
+        )
+
+        print(f"\n[AI AGENT] [Phân hệ: {intent} | Tool: {tool_used} | Mode: {mode}]:")
+        print(reply_text)
         print("-" * 70)
 
 

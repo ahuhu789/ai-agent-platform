@@ -17,6 +17,9 @@ from shared.abstractions.llm import BaseLLM
 from shared.clients.mcp_client import MultiServerMCPClient
 from shared.llm.config import load_config
 from shared.llm.factory import LLMFactory
+from shared.logger import setup_logger
+
+logger = setup_logger("fme.agent_setup")
 
 
 def setup_mcp_client() -> MultiServerMCPClient:
@@ -40,28 +43,37 @@ def setup_mcp_client() -> MultiServerMCPClient:
     try:
         client.connect_all()
     except Exception as e:
-        print(f"[AgentSetup] Cảnh báo: Không thể kết nối MCP Server ngay lúc khởi động ({e})")
+        logger.warning("[AgentSetup] Could not connect to MCP servers at startup (%s)", e)
     return client
 
 
 def setup_llm() -> Optional[BaseLLM]:
-    """Khởi tạo LLM Provider thông qua LLMFactory."""
+    """Khởi tạo LLM Provider thông qua LLMFactory.
+    Chỉ kích hoạt khi có OPENAI_API_KEY hoặc LLM_PROVIDER được chỉ định cụ thể.
+    Khi chưa cấu hình API key, trả về None để các Agent chạy ở chế độ Rule-based
+    và Template Formatter với đầy đủ dữ liệu thực tế thay vì trả về Mock response.
+    """
     config_path = Path(__file__).resolve().parent.parent.parent / "shared" / "llm" / "config.yaml"
     try:
         config = load_config(str(config_path))
-        # Cho phép chỉ định provider qua biến môi trường LLM_PROVIDER
-        # Nếu có OPENAI_API_KEY và không chỉ định provider khác, kích hoạt provider openai
         env_provider = os.getenv("LLM_PROVIDER")
-        if env_provider:
+        openai_key = os.getenv("OPENAI_API_KEY")
+
+        if env_provider and env_provider.lower().strip() != "mock":
             config.active_provider = env_provider.lower().strip()
-        elif os.getenv("OPENAI_API_KEY"):
+        elif openai_key:
             config.active_provider = "openai"
+        elif env_provider and env_provider.lower().strip() == "mock":
+            config.active_provider = "mock"
+        else:
+            logger.info("[AgentSetup] No OPENAI_API_KEY set. Running in offline Rule-based & Template mode.")
+            return None
 
         llm_instance = LLMFactory.create(config)
-        print(f"[AgentSetup] LLM Provider đã kích hoạt: {config.active_provider}")
+        logger.info("[AgentSetup] LLM Provider active: %s", config.active_provider)
         return llm_instance
     except Exception as e:
-        print(f"[AgentSetup] Cảnh báo: Không thể tạo LLM từ config ({e}). Các Agent sẽ chạy fallback rule-based.")
+        logger.warning("[AgentSetup] Could not create LLM from config (%s). Falling back to rule-based.", e)
         return None
 
 

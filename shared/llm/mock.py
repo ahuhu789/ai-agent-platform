@@ -5,6 +5,8 @@ from .interface import LLM, LLMRequest, LLMResponse
 class MockLLM(LLM):
     """LLM giả lập, dùng để test không cần kết nối thật."""
 
+    is_mock: bool = True
+
     def __init__(self, response_content="This is a mock response.", raise_error=None):
         """Cấu hình nội dung trả về hoặc lỗi cần giả lập."""
         self.response_content = response_content

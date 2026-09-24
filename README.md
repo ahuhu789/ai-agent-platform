@@ -130,6 +130,15 @@ uvicorn apps.chatbot.main:app --reload --port 8000
 - **Web Demo UI**: Truy cập [http://localhost:8000](http://localhost:8000)
 - **Interactive Swagger Docs**: Truy cập [http://localhost:8000/docs](http://localhost:8000/docs)
 
+### 4.4. Khởi chạy giao diện dòng lệnh (Interactive CLI Chat)
+Nếu muốn trò chuyện trực tiếp qua terminal mà không cần bật Web Server:
+```bash
+python chat.py
+# hoặc
+python run_chat.py
+```
+*(Hệ thống hỗ trợ đầy đủ bộ nhớ hội thoại đa lượt, tự động gọi MCP Servers cho cả 3 phân hệ Tuyển dụng, Chuyên cần và Nhân sự ngay cả khi không có OpenAI API Key).*
+
 ---
 
 ## 5. Kiểm thử tự động (Automated Testing)

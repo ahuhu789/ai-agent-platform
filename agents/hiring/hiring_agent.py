@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import unicodedata
 from typing import Any, Callable, Dict, Optional
 
 try:
@@ -138,7 +139,7 @@ class HiringAgent(BaseAgent):
 
     def _extract_intent(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Extract tool and parameters using injected LLM if available, otherwise rule-based matcher."""
-        if self.llm or (self.openai_client and (os.getenv("OPENAI_API_KEY") or getattr(self.openai_client, "api_key", None))):
+        if (self.llm and not getattr(self.llm, "is_mock", False)) or (self.openai_client and (os.getenv("OPENAI_API_KEY") or getattr(self.openai_client, "api_key", None))):
             try:
                 return self._extract_intent_with_llm(message, context)
             except Exception:
@@ -182,6 +183,11 @@ class HiringAgent(BaseAgent):
     def _extract_intent_rule_based(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Reliable rule-based matcher for development and offline testing."""
         msg = message.lower()
+        msg_norm = unicodedata.normalize("NFD", msg)
+        msg_no_dia = "".join(ch for ch in msg_norm if unicodedata.category(ch) != "Mn").replace("đ", "d").replace("Đ", "D")
+
+        def match_any(keywords):
+            return any(k in msg or k in msg_no_dia for k in keywords)
 
         # 1. Candidate detail query: "thông tin ứng viên ...", "mã UV001", "hồ sơ ứng viên"
         uv_match = re.search(r"\b(uv\d{3,4})\b", msg, re.IGNORECASE)
@@ -194,7 +200,7 @@ class HiringAgent(BaseAgent):
         if uv_match:
             return {"tool": "get_candidate_detail", "parameters": {"candidate_id": candidate_id}}
 
-        if any(k in msg for k in ["thông tin ứng viên", "hồ sơ ứng viên", "chi tiết ứng viên", "ứng viên này", "bạn này", "người này"]):
+        if match_any(["thông tin ứng viên", "hồ sơ ứng viên", "chi tiết ứng viên", "ứng viên này", "bạn này", "người này"]):
             if candidate_id:
                 return {"tool": "get_candidate_detail", "parameters": {"candidate_id": candidate_id}}
             return {
@@ -203,9 +209,9 @@ class HiringAgent(BaseAgent):
             }
 
         # 2. Interview schedule: "lịch phỏng vấn", "khi nào phỏng vấn", "phỏng vấn tuần này"
-        if any(k in msg for k in ["lịch phỏng vấn", "lịch pv", "khi nào phỏng vấn", "danh sách phỏng vấn"]):
+        if match_any(["lịch phỏng vấn", "lịch pv", "khi nào phỏng vấn", "danh sách phỏng vấn"]):
             params = {}
-            if "tuần này" in msg or "hôm nay" in msg or "tháng 8" in msg:
+            if match_any(["tuần này", "hôm nay", "tháng 8"]):
                 # Default current demo month
                 params["from_date"] = "2026-08-01"
                 params["to_date"] = "2026-08-31"
@@ -222,19 +228,19 @@ class HiringAgent(BaseAgent):
             "applied": ["mới nộp", "applied", "mới ứng tuyển"],
         }
         for status_code, keywords in status_map.items():
-            if any(k in msg for k in keywords):
+            if match_any(keywords):
                 return {"tool": "search_candidates", "parameters": {"status": status_code}}
 
         # 4. Job openings: "vị trí đang tuyển", "vị trí tuyển dụng", "đang tuyển những vị trí nào", "job openings"
-        if any(k in msg for k in ["vị trí đang tuyển", "vị trí tuyển dụng", "đang tuyển", "danh sách tuyển dụng", "job"]):
+        if match_any(["vị trí đang tuyển", "vị trí tuyển dụng", "đang tuyển", "danh sách tuyển dụng", "job"]):
             dept = None
-            if any(k in msg for k in ["công nghệ", "it", "ai", "backend"]):
+            if match_any(["công nghệ", "it", "ai", "backend"]):
                 dept = "Khối Công nghệ thông tin"
-            elif any(k in msg for k in ["dữ liệu", "data"]):
+            elif match_any(["dữ liệu", "data"]):
                 dept = "Khối Dữ liệu & AI"
-            elif any(k in msg for k in ["nhân sự", "hr"]):
+            elif match_any(["nhân sự", "hr"]):
                 dept = "Phòng Nhân sự"
-            elif any(k in msg for k in ["vận hành", "devops", "sre"]):
+            elif match_any(["vận hành", "devops", "sre"]):
                 dept = "Khối Vận hành"
             params = {"status": "open"}
             if dept:
@@ -242,14 +248,14 @@ class HiringAgent(BaseAgent):
             return {"tool": "list_job_openings", "parameters": params}
 
         # 5. Recruitment summary / statistics: "tổng hợp", "tình hình tuyển dụng", "thống kê tuyển dụng", "báo cáo tuyển dụng"
-        if any(k in msg for k in ["tổng hợp", "thống kê", "tình hình tuyển dụng", "báo cáo tuyển dụng", "tổng số ứng viên"]):
+        if match_any(["tổng hợp", "thống kê", "tình hình tuyển dụng", "báo cáo tuyển dụng", "tổng số ứng viên"]):
             return {"tool": "get_recruitment_summary", "parameters": {}}
 
         # 6. General candidate search: "tìm ứng viên", "danh sách ứng viên", "ứng viên backend", etc.
-        if any(k in msg for k in ["tìm ứng viên", "ứng viên", "danh sách ứng viên"]):
+        if match_any(["tìm ứng viên", "ứng viên", "danh sách ứng viên"]):
             kw = None
             for title in ["backend", "ai", "machine learning", "dữ liệu", "data", "nhân sự", "devops", "sre"]:
-                if title in msg:
+                if title in msg or title in msg_no_dia:
                     kw = title
                     break
             params = {}
@@ -293,7 +299,7 @@ class HiringAgent(BaseAgent):
             f"Dữ liệu Tool trả về:\n{json.dumps(data, ensure_ascii=False, indent=2)}"
         )
 
-        if self.llm:
+        if self.llm and not getattr(self.llm, "is_mock", False):
             try:
                 req = LLMRequest(
                     messages=[

@@ -1,20 +1,5 @@
-from shared.llm import load_config, LLMFactory, LLMRequest
+"""CLI Chat runner for AI Agent Platform."""
+from chat import main
 
-config = load_config("shared/llm/config.yaml")
-llm = LLMFactory.create(config)
-
-while True:
-    question = input("You: ")
-
-    if question.lower() in {"exit", "quit"}:
-        break
-
-    response = llm.generate(
-        LLMRequest(
-            messages=[
-                {"role": "user", "content": question}
-            ]
-        )
-    )
-
-    print("AI:", response.content)
+if __name__ == "__main__":
+    main()

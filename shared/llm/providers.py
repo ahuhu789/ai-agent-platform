@@ -18,9 +18,9 @@ class OpenAILLM(LLM):
         except ImportError as exc:
             raise LLMProviderError("Thư viện 'openai' chưa được cài đặt. Hãy chạy: pip install openai") from exc
 
-        api_key = config.extra.get("api_key") or os.getenv("OPENAI_API_KEY")
-        base_url = config.extra.get("base_url") or os.getenv("OPENAI_BASE_URL")
-        timeout = config.timeout or float(os.getenv("OPENAI_TIMEOUT", 30))
+        api_key = os.getenv("OPENAI_API_KEY") or config.extra.get("api_key")
+        base_url = os.getenv("OPENAI_BASE_URL") or config.extra.get("base_url")
+        timeout = float(os.getenv("OPENAI_TIMEOUT")) if os.getenv("OPENAI_TIMEOUT") else (config.timeout or 30)
 
         if not api_key:
             raise LLMProviderError(
@@ -40,7 +40,7 @@ class OpenAILLM(LLM):
             raise LLMConnectionError(f"Không thể khởi tạo OpenAI client: {error}") from error
 
     def generate(self, request: LLMRequest) -> LLMResponse:
-        model = request.model or self.config.model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        model = request.model or os.getenv("OPENAI_MODEL") or self.config.model or "gpt-4o-mini"
         temperature = request.temperature if request.temperature is not None else self.config.temperature
 
         kwargs = {

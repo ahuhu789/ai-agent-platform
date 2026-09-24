@@ -106,7 +106,7 @@ class AttendanceAgent(BaseAgent):
 
     def _extract_intent(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Extract tool and parameters using LLM or rule-based fallback."""
-        if self.llm or self.openai_client:
+        if (self.llm and not getattr(self.llm, "is_mock", False)) or self.openai_client:
             try:
                 return self._extract_intent_with_llm(message, context)
             except Exception:
@@ -272,7 +272,7 @@ class AttendanceAgent(BaseAgent):
         tool_result: Dict[str, Any],
     ) -> str:
         """Synthesize tool result into user-facing response."""
-        if self.llm or self.openai_client:
+        if (self.llm and not getattr(self.llm, "is_mock", False)) or self.openai_client:
             try:
                 return self._synthesize_response_with_llm(message, tool_name, parameters, tool_result)
             except Exception:
@@ -296,7 +296,7 @@ class AttendanceAgent(BaseAgent):
             "Hãy trả lời câu hỏi của người dùng dựa trên kết quả trên một cách tự nhiên, rõ ràng, định dạng Markdown đẹp mắt."
         )
 
-        if self.llm:
+        if self.llm and not getattr(self.llm, "is_mock", False):
             req = LLMRequest(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model_name,
