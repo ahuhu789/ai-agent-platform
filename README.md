@@ -81,7 +81,6 @@ AI Agent platform/
 │   ├── cache/                    # InMemoryCache (Hỗ trợ TTL và thread-safe)
 │   └── logger/                   # Centralized logger cấu hình stream sys.stderr
 ├── tests/                        # 161 automated unit, benchmark & integration tests
-├── docs/                         # Tài liệu đặc tả kỹ thuật dự án (AI_Plan.pdf, hiring_tools.md, etc.)
 ├── requirements.txt              # Thư viện phụ thuộc
 ├── .env.example                  # File cấu hình mẫu đầy đủ các biến môi trường
 └── README.md                     # Tài liệu hướng dẫn dự án
