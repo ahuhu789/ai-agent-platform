@@ -90,8 +90,45 @@ def test_root_agent_routing(question, expected_intent):
     assert actual_intent == expected_intent
 
 
+def test_root_agent_never_routes_to_system_or_root_agent():
+    """Đảm bảo nếu context có last_agent là 'root_agent' hoặc 'chat_service', RootAgent không bao giờ route tới nó."""
+    root_agent = build_root_agent()
+    # Giả sử lượt trước lỗi và last_agent bị lưu là root_agent hoặc chat_service
+    for invalid_agent in ["root_agent", "root", "chat_service", "system"]:
+        req = AgentRequest(
+            message="chi tiết",
+            context={"last_agent": invalid_agent}
+        )
+        res = root_agent.handle(req)
+        # Phải rơi vào fallback 'chưa hiểu câu hỏi', không được báo 'Phân hệ {invalid_agent} hiện chưa sẵn sàng'
+        assert res.success is False
+        assert f"Phân hệ '{invalid_agent}' hiện chưa sẵn sàng." not in (res.error or "")
+        assert res.metadata.get("intent") is None
+
+
+def test_memory_store_never_tracks_system_agents():
+    """Đảm bảo memory_store.track_interaction không lưu root_agent/chat_service làm last_agent."""
+    from apps.chatbot.memory_store import memory_store
+    conv_id = "test_system_agent_tracking"
+    user_id = "user_system_test"
+
+    # Giả lập response từ root_agent khi không hiểu câu hỏi
+    memory_store.track_interaction(
+        conversation_id=conv_id,
+        user_id=user_id,
+        user_message="câu hỏi linh tinh",
+        metadata={"source": "root_agent", "intent": None}
+    )
+
+    ctx = memory_store.build_chat_context(conv_id, user_id=user_id)
+    assert ctx.get("last_agent") != "root_agent"
+    assert ctx.get("last_agent") is None
+
+
 if __name__ == "__main__":
     run_tests()
     print()
     test_empty_and_none_message()
     test_duplicate_registration_warns()
+    test_root_agent_never_routes_to_system_or_root_agent()
+    test_memory_store_never_tracks_system_agents()

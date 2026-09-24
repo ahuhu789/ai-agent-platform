@@ -181,8 +181,12 @@ class ChatbotMemoryAdapter:
         params = meta.get("parameters") or data.get("parameters") or {}
 
         # 1. Track Agent
-        agent = meta.get("agent") or meta.get("intent") or meta.get("source")
-        if agent:
+        agent = meta.get("agent") or meta.get("intent")
+        if not agent:
+            source = meta.get("source")
+            if source and source not in ["root_agent", "root", "chat_service", "system"]:
+                agent = source
+        if agent and agent not in ["root_agent", "root", "chat_service", "system"]:
             updates[LAST_AGENT] = agent
             updates["last_agent"] = agent
 
@@ -234,7 +238,7 @@ class ChatbotMemoryAdapter:
 
         if updates:
             self._store.update_user_context(user_id, updates)
-            if agent:
+            if agent and agent not in ["root_agent", "root", "chat_service", "system"]:
                 self._store.update_agent_context(user_id, agent, updates)
 
 

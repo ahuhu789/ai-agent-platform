@@ -98,6 +98,11 @@ class RootAgent(BaseAgent):
             out_of_scope_keywords = ["thời tiết", "thoi tiet", "nấu phở", "nau pho", "bài thơ", "bai tho", "kể chuyện", "chơi game"]
             is_out_of_scope = any(kw in msg_lower for kw in out_of_scope_keywords)
 
+            # Chỉ dùng last_agent nếu nó là một domain agent hợp lệ (không phải root_agent, root, hay chat_service)
+            valid_domain_agents = {"hiring", "attendance", "employee"}
+            if last_agent not in valid_domain_agents:
+                last_agent = None
+
             if not is_out_of_scope:
                 if last_agent == "hiring" and any(k in msg_lower for k in ["bạn này", "ứng viên này", "ban nay", "ung vien"]):
                     intent = "hiring"
