@@ -1,5 +1,7 @@
 """Unit tests for Hiring MCP Server tools and validation."""
 
+import sys
+
 import pytest
 from mcp_servers.hiring.function_support import MockHiringSupport
 from mcp_servers.hiring.tools import HiringTools
@@ -123,3 +125,24 @@ def test_get_recruitment_summary(tools):
     assert data["total_candidates"] > 0
     assert data["pending_interview_count"] >= 1
     assert "Khối Công nghệ thông tin" in data["by_department"]
+
+
+def test_server_supports_streamable_http(monkeypatch):
+    from mcp_servers.hiring import server
+
+    calls = []
+
+    class FakeServer:
+        async def run_streamable_http_async(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(server, "mcp_server", FakeServer())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["server.py", "--transport", "streamable-http", "--host", "127.0.0.1", "--port", "9001"],
+    )
+
+    server.main()
+
+    assert calls == [{"host": "127.0.0.1", "port": 9001}]

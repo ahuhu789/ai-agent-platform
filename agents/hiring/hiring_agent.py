@@ -1,5 +1,7 @@
 """Hiring Agent implementation extending BaseAgent."""
 
+import asyncio
+import inspect
 import json
 import os
 import re
@@ -12,6 +14,7 @@ except ImportError:
     pass
 
 from shared.abstractions.agent import AgentRequest, AgentResponse, BaseAgent
+from shared.abstractions.mcp_client import MCPToolResult
 from mcp_servers.hiring.tools import HiringTools
 from .prompts import HIRING_AGENT_SYSTEM_PROMPT, INTENT_EXTRACTION_PROMPT
 
@@ -64,6 +67,14 @@ class HiringAgent(BaseAgent):
 
     def handle(self, request: AgentRequest) -> AgentResponse:
         """Handle an incoming user message routed from Root Agent."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.handle_async(request))
+        raise RuntimeError("use 'await agent.handle_async(request)' inside an event loop")
+
+    async def handle_async(self, request: AgentRequest) -> AgentResponse:
+        """Handle a request without blocking an active event loop."""
         message = request.message.strip()
         if not message:
             return AgentResponse(
@@ -93,7 +104,7 @@ class HiringAgent(BaseAgent):
                 return self._handle_general_recruitment_query(message)
 
             # 3. Execute the tool (via MCP Client if present, or direct tools)
-            tool_result = self._execute_tool(tool_name, params)
+            tool_result = await self._execute_tool(tool_name, params)
 
             # 4. Synthesize result into natural language response
             synthesized_answer = self._synthesize_response(message, tool_name, params, tool_result)
@@ -123,12 +134,21 @@ class HiringAgent(BaseAgent):
                 metadata={"source": "hiring", "agent": self.name},
             )
 
-    def _execute_tool(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_tool(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute tool through MCP Client if configured, or fall back to internal tool dispatcher."""
         if self.mcp_client and hasattr(self.mcp_client, "call_tool"):
-            # When Core team's MCP Client is available
             try:
-                return self.mcp_client.call_tool("hiring", tool_name, params)
+                result = self.mcp_client.call_tool("hiring", tool_name, params)
+                if inspect.isawaitable(result):
+                    result = await result
+                if isinstance(result, MCPToolResult):
+                    return {
+                        "success": result.success,
+                        "data": result.data,
+                        "error": result.error,
+                        "metadata": result.metadata,
+                    }
+                return result
             except Exception as e:
                 return {"success": False, "error": f"Lỗi gọi MCP Client: {str(e)}", "data": None}
 

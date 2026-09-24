@@ -1,4 +1,4 @@
-"""Hiring MCP Server implementation supporting stdio and SSE transports."""
+"""Hiring MCP Server implementation supporting stdio and HTTP transports."""
 
 import argparse
 import asyncio
@@ -128,20 +128,20 @@ def main():
     parser = argparse.ArgumentParser(description="Hiring MCP Server")
     parser.add_argument(
         "--transport",
-        choices=["stdio", "sse"],
+        choices=["stdio", "sse", "streamable-http"],
         default=os.getenv("MCP_TRANSPORT", "stdio"),
-        help="Transport protocol to use (stdio or sse)",
+        help="Transport protocol to use (stdio, sse, or streamable-http)",
     )
     parser.add_argument(
         "--host",
         default=os.getenv("MCP_HOST", "0.0.0.0"),
-        help="Host for SSE transport",
+        help="Host for HTTP transports",
     )
     parser.add_argument(
         "--port",
         type=int,
         default=int(os.getenv("MCP_PORT", "8001")),
-        help="Port for SSE transport",
+        help="Port for HTTP transports",
     )
 
     args = parser.parse_args()
@@ -153,6 +153,19 @@ def main():
                 asyncio.run(mcp_server.run_sse_async(host=args.host, port=args.port))
             else:
                 mcp_server.run(transport="sse")
+        elif args.transport == "streamable-http":
+            logger.info(
+                f"Starting Hiring MCP Server with Streamable HTTP on {args.host}:{args.port}/mcp..."
+            )
+            if hasattr(mcp_server, "run_streamable_http_async"):
+                asyncio.run(
+                    mcp_server.run_streamable_http_async(
+                        host=args.host,
+                        port=args.port,
+                    )
+                )
+            else:
+                mcp_server.run(transport="streamable-http")
         else:
             logger.info("Starting Hiring MCP Server with stdio...")
             if hasattr(mcp_server, "run_stdio_async"):

@@ -21,9 +21,9 @@ graph TD
     AttendanceAgent -->|Intent / Tool Call| MCPClient
     EmployeeAgent -->|Intent / Tool Call| MCPClient
     
-    MCPClient -->|stdio / SSE| HiringMCP["Hiring MCP Server"]
-    MCPClient -->|stdio / SSE| AttendanceMCP["Attendance MCP Server"]
-    MCPClient -->|stdio / SSE| EmployeeMCP["Employee MCP Server"]
+    MCPClient -->|Streamable HTTP| HiringMCP["Hiring MCP Server"]
+    MCPClient -->|Streamable HTTP| AttendanceMCP["Attendance MCP Server"]
+    MCPClient -->|Streamable HTTP| EmployeeMCP["Employee MCP Server"]
     
     HiringMCP --> HiringSupport["Hiring Function Support (Mock / API)"]
     AttendanceMCP --> AttendanceSupport["Attendance Function Support"]
@@ -61,6 +61,8 @@ AI Agent platform/
 │   │   ├── llm.py                # BaseLLM, LLMRequest, LLMResponse
 │   │   ├── cache.py              # BaseCache
 │   │   └── mcp_client.py         # BaseMCPClient, ToolDefinition, MCPToolResult
+│   ├── clients/
+│   │   └── mcp_integration/      # MCP v2 client, discovery cache, tool routing
 │   ├── llm/                      # LLM Factory & Provider implementations
 │   ├── memory/                   # InMemoryStore & RedisMemoryStore
 │   └── cache/                    # In-memory & Redis Cache
@@ -89,7 +91,7 @@ AI Agent platform/
 | 2 | **Core Chatbot** | Vũ Công Nguyên Khang | MemoryStore (In-memory, Redis), quản lý Session | MEM-01 | `shared/memory/` |
 | 3 | **Core Chatbot** | Hoàng Minh Anh | LLM Interface, LLM Factory, chuẩn hóa Request/Response | LLM-01 → LLM-04 | `shared/llm/` |
 | 4 | **Core Chatbot** | Thành viên 4 | FastAPI Chat endpoint (`/chat`, `/conversations`), Swagger | API-01 → API-05 | `apps/chatbot/` |
-| 5 | **Core Chatbot** | Thành viên 5 | BaseCache, MCP Client kết nối đa Server qua stdio/SSE | MCP-01 → MCP-04 | `shared/cache/`, `shared/clients/` |
+| 5 | **Core Chatbot** | Thành viên 5 | BaseCache, MCP Client kết nối đa Server qua Streamable HTTP | MCP-01 → MCP-04 | `shared/cache/`, `shared/clients/` |
 | 6 | **Tuyển dụng** | Nguyễn Huy Thanh | Hiring MCP Server (5 Tools), Function Support, Hiring Agent | HIR-01 → HIR-10 | `agents/hiring/`, `mcp_servers/hiring/` |
 | 7 | **Chuyên cần** | Lê Hữu Thanh Vy | Attendance MCP Server, Attendance Agent | ATT-01 | `agents/attendance/`, `mcp_servers/attendance/` |
 | 8 | **Nhân sự** | Hồ Tấn Dũng | Employee MCP Server, Employee Agent, bảo mật dữ liệu | EMP-01 | `agents/employee/`, `mcp_servers/employee/` |
@@ -156,7 +158,7 @@ Mọi MCP Tool của tất cả các phân hệ đều phải trả về định
 ## 6. Hướng dẫn cài đặt & Chạy thử nghiệm
 
 ### 6.1. Cài đặt môi trường
-Yêu cầu Python 3.10+:
+Yêu cầu Python 3.11+:
 ```bash
 pip install -r requirements.txt
 ```
@@ -172,7 +174,7 @@ Toàn bộ test suite được thiết kế chạy offline, không phụ thuộc
 ```bash
 pytest
 ```
-*Kết quả hiện tại: 14/14 tests pass (100%).*
+Khi tích hợp thay đổi, toàn bộ test cũ và test MCP Client đều phải pass.
 
 ### 6.3. Chạy Demo Tuyển dụng nghiệm thu (7 kịch bản)
 ```bash
@@ -193,7 +195,44 @@ python chat.py
   ```bash
   python -m mcp_servers.hiring.server --transport sse --host 0.0.0.0 --port 8001
   ```
+- Khởi chạy qua **Streamable HTTP** để dùng với MCP Client đa server:
+  ```bash
+  python -m mcp_servers.hiring.server --transport streamable-http --host 0.0.0.0 --port 8001
+  ```
 - Kiểm thử trực quan với công cụ **MCP Inspector**:
   ```bash
   npx @modelcontextprotocol/inspector python -m mcp_servers.hiring.server
   ```
+
+---
+
+## 7. MCP Client đa server
+
+Client trong `shared/clients/mcp_integration/` kết nối đúng ba MCP v2 server, cache kết quả khám phá tool theo TTL và định tuyến tool về server sở hữu. Kết quả gọi tool không được cache.
+
+```python
+from shared.clients.mcp_integration import (
+    MCPClientManager,
+    MCPServerConfig,
+    MemoryTTLCache,
+)
+from shared.clients import PlatformMCPClient
+
+configs = [
+    MCPServerConfig("hiring", "http://localhost:8001/mcp"),
+    MCPServerConfig("attendance", "http://localhost:8002/mcp"),
+    MCPServerConfig("employee", "http://localhost:8003/mcp"),
+]
+
+manager = MCPClientManager(configs, MemoryTTLCache())
+async with PlatformMCPClient(manager) as client:
+    tools = await client.list_tools("hiring")
+    result = await client.call_tool(
+        "hiring", "search_candidates", {"keyword": "Python"}
+    )
+    refreshed_tools = await manager.refresh_tools(force=True)
+```
+
+Các biến URL, timeout, token và TTL mẫu nằm trong `.env.example`; ứng dụng truyền chúng vào `MCPServerConfig` tại composition root. Endpoint có token phải dùng HTTPS, ngoại trừ localhost. Overlapping operations are unsupported, as are multi-round-trip MCP sampling or elicitation flows.
+
+Có thể tạo client trực tiếp từ các biến này bằng `create_platform_mcp_client_from_env()`. Khi gọi từ một luồng async, inject client vào `HiringAgent` và dùng `await agent.handle_async(request)`; `handle()` đồng bộ vẫn dành cho CLI/demo hiện tại.

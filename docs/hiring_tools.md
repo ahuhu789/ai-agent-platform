@@ -199,6 +199,9 @@ python -m mcp_servers.hiring.server --transport stdio
 
 # Chạy với SSE transport
 python -m mcp_servers.hiring.server --transport sse --host 0.0.0.0 --port 8001
+
+# Chạy với Streamable HTTP cho MCP Client đa server
+python -m mcp_servers.hiring.server --transport streamable-http --host 0.0.0.0 --port 8001
 ```
 
 ### Sử dụng HiringAgent trong Python (Tích hợp Root Agent)
