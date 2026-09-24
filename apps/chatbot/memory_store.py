@@ -84,11 +84,158 @@ class ChatbotMemoryAdapter:
     def get_user_context(self, user_id: str, key: str) -> Optional[Any]:
         return self._store.get_user_context(user_id).get(key)
 
+    def get_all_user_context(self, user_id: str) -> Dict[str, Any]:
+        return self._store.get_user_context(user_id)
+
+    def update_user_context(self, user_id: str, data: Dict[str, Any]) -> None:
+        self._store.update_user_context(user_id, data)
+
     def set_agent_context(self, user_id: str, agent_name: str, key: str, value: Any) -> None:
         self._store.update_agent_context(user_id, agent_name, {key: value})
 
     def get_agent_context(self, user_id: str, agent_name: str, key: str) -> Optional[Any]:
         return self._store.get_agent_context(user_id, agent_name).get(key)
+
+    def build_chat_context(self, conversation_id: str, user_id: str = "default_user") -> Dict[str, Any]:
+        """Build rich conversation & user context for Multi-turn agent reasoning."""
+        import re
+        from shared.memory.context_keys import (
+            LAST_AGENT,
+            LAST_CANDIDATE_ID,
+            LAST_DEPARTMENT,
+            LAST_EMPLOYEE_ID,
+            LAST_EMPLOYEE_NAME,
+        )
+
+        user_ctx = dict(self._store.get_user_context(user_id) or {})
+        messages = self.get_messages(conversation_id, limit=10, user_id=user_id)
+
+        last_cand = user_ctx.get(LAST_CANDIDATE_ID) or user_ctx.get("last_candidate_id")
+        last_emp = user_ctx.get(LAST_EMPLOYEE_ID) or user_ctx.get("last_employee_id")
+        last_dept = user_ctx.get(LAST_DEPARTMENT) or user_ctx.get("last_department")
+        last_emp_name = user_ctx.get(LAST_EMPLOYEE_NAME) or user_ctx.get("last_employee_name")
+        last_agent = user_ctx.get(LAST_AGENT) or user_ctx.get("last_agent")
+
+        # Scan recent messages to recover context if missing
+        for m in reversed(messages):
+            content = m.get("content", "")
+            if not last_cand:
+                cand_match = re.search(r"\b(UV[- ]?\d{3,4})\b", content, re.IGNORECASE)
+                if cand_match:
+                    last_cand = cand_match.group(1).upper().replace(" ", "").replace("-", "")
+            if not last_emp:
+                emp_match = re.search(r"\b(NV[- ]?\d{3,4})\b", content, re.IGNORECASE)
+                if emp_match:
+                    last_emp = emp_match.group(1).upper().replace(" ", "").replace("-", "")
+            if not last_emp_name:
+                name_match = re.search(r"nhân viên\s+([A-ZÀ-Ỹa-zà-ỹ\s]+?)(?:\s+thuộc|\s+ở|\s+đi|\s+có|$)", content, re.IGNORECASE)
+                if name_match:
+                    found_name = name_match.group(1).strip()
+                    if len(found_name) <= 25 and not any(k in found_name.lower() for k in ["này", "đó", "nào"]):
+                        last_emp_name = found_name
+            if not last_dept:
+                for d in ["Kỹ thuật", "Nhân sự", "Kế toán", "Kinh doanh", "Marketing", "Vận hành"]:
+                    if d.lower() in content.lower():
+                        last_dept = f"Phòng {d}"
+                        break
+
+        ctx = {
+            **user_ctx,
+            "conversation_id": conversation_id,
+            "user_id": user_id,
+            "last_candidate_id": last_cand,
+            "last_employee_id": last_emp,
+            "last_employee_name": last_emp_name,
+            "last_department": last_dept,
+            "last_agent": last_agent,
+            LAST_CANDIDATE_ID: last_cand,
+            LAST_EMPLOYEE_ID: last_emp,
+            LAST_EMPLOYEE_NAME: last_emp_name,
+            LAST_DEPARTMENT: last_dept,
+            LAST_AGENT: last_agent,
+            "chat_history": messages,
+        }
+        return ctx
+
+    def track_interaction(
+        self,
+        conversation_id: str,
+        user_id: str,
+        user_message: str,
+        agent_response_data: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Extract and persist entities and agent state into user context for subsequent turns."""
+        import re
+        from shared.memory.context_keys import (
+            LAST_AGENT,
+            LAST_CANDIDATE_ID,
+            LAST_DEPARTMENT,
+            LAST_EMPLOYEE_ID,
+            LAST_EMPLOYEE_NAME,
+        )
+
+        updates: Dict[str, Any] = {}
+        meta = metadata or {}
+        data = agent_response_data or {}
+        params = meta.get("parameters") or data.get("parameters") or {}
+
+        # 1. Track Agent
+        agent = meta.get("agent") or meta.get("intent") or meta.get("source")
+        if agent:
+            updates[LAST_AGENT] = agent
+            updates["last_agent"] = agent
+
+        # 2. Track Candidate ID
+        cand_id = params.get("candidate_id")
+        if not cand_id:
+            m = re.search(r"\b(UV[- ]?\d{3,4})\b", user_message, re.IGNORECASE)
+            if m:
+                cand_id = m.group(1).upper().replace(" ", "").replace("-", "")
+        if not cand_id and isinstance(data.get("raw_tool_result"), dict):
+            cand_id = data["raw_tool_result"].get("data", {}).get("id") if isinstance(data["raw_tool_result"].get("data"), dict) else None
+        if cand_id:
+            updates[LAST_CANDIDATE_ID] = cand_id
+            updates["last_candidate_id"] = cand_id
+
+        # 3. Track Employee ID & Name
+        emp_id = params.get("employee_id")
+        if not emp_id:
+            m = re.search(r"\b(NV[- ]?\d{3,4})\b", user_message, re.IGNORECASE)
+            if m:
+                emp_id = m.group(1).upper().replace(" ", "").replace("-", "")
+        if not emp_id and isinstance(data.get("raw_tool_result"), dict):
+            raw_data = data["raw_tool_result"].get("data")
+            if isinstance(raw_data, dict):
+                emp_id = raw_data.get("employee_id") or raw_data.get("id")
+        if emp_id:
+            updates[LAST_EMPLOYEE_ID] = emp_id
+            updates["last_employee_id"] = emp_id
+
+        # Employee name
+        emp_name = None
+        if isinstance(data.get("raw_tool_result"), dict):
+            raw_data = data["raw_tool_result"].get("data")
+            if isinstance(raw_data, dict):
+                emp_name = raw_data.get("employee_name") or raw_data.get("name")
+        if emp_name:
+            updates[LAST_EMPLOYEE_NAME] = emp_name
+            updates["last_employee_name"] = emp_name
+
+        # 4. Track Department
+        dept = params.get("department_id") or params.get("department")
+        if not dept and isinstance(data.get("raw_tool_result"), dict):
+            raw_data = data["raw_tool_result"].get("data")
+            if isinstance(raw_data, dict):
+                dept = raw_data.get("department_name") or raw_data.get("department_id")
+        if dept:
+            updates[LAST_DEPARTMENT] = dept
+            updates["last_department"] = dept
+
+        if updates:
+            self._store.update_user_context(user_id, updates)
+            if agent:
+                self._store.update_agent_context(user_id, agent, updates)
 
 
 # Singleton dùng chung trong toàn bộ Chat API

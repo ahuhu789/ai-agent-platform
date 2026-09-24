@@ -239,3 +239,40 @@ def test_chat_api_response_structure(api_client):
     assert "conversation_id" in data
     assert len(data.get("messages", [])) >= 2
 
+
+def test_chat_multi_turn_cross_domain_benchmark(api_client):
+    """Benchmark kiểm thử hội thoại đa lượt và lưu trữ ngữ cảnh liên phân hệ Tuyển dụng, Nhân sự, Chuyên cần."""
+    # Turn 1: Hỏi thông tin ứng viên UV001 (Tuyển dụng)
+    res1 = api_client.post("/chat", json={"message": "Ứng viên UV001 có thông tin gì?"})
+    assert res1.status_code == 200
+    d1 = res1.json()
+    assert d1["success"] is True
+    assert d1["metadata"]["intent"] == "hiring"
+    assert "UV001" in d1["reply"]
+    conv_id = d1["conversation_id"]
+
+    # Turn 2: Hỏi tiếp về ứng viên này không cần nhắc mã UV001 (Đại từ "bạn này")
+    res2 = api_client.post("/chat", json={"conversation_id": conv_id, "message": "Xem hồ sơ bạn này"})
+    assert res2.status_code == 200
+    d2 = res2.json()
+    assert d2["success"] is True
+    assert d2["metadata"]["intent"] == "hiring"
+    assert "UV001" in d2["reply"]
+
+    # Turn 3: Chuyển sang hỏi về nhân viên NV002 (Nhân sự)
+    res3 = api_client.post("/chat", json={"conversation_id": conv_id, "message": "Cho tôi xem hồ sơ nhân sự của nhân viên NV002"})
+    assert res3.status_code == 200
+    d3 = res3.json()
+    assert d3["success"] is True
+    assert d3["metadata"]["intent"] == "employee"
+    assert "Trần Thị B" in d3["reply"]
+
+    # Turn 4: Hỏi tiếp về chuyên cần trong tháng 8 của người này mà không nhắc lại mã hay tên (Chuyên cần)
+    res4 = api_client.post("/chat", json={"conversation_id": conv_id, "message": "Tháng 8 người này đi làm bao nhiêu ngày?"})
+    assert res4.status_code == 200
+    d4 = res4.json()
+    assert d4["success"] is True
+    assert d4["metadata"]["intent"] == "attendance"
+    assert ("Trần Thị B" in d4["reply"] or "NV002" in d4["reply"])
+
+

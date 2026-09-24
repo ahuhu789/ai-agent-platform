@@ -150,17 +150,25 @@ class AttendanceAgent(BaseAgent):
 
         # Look for "nhân viên A" or "nhân viên B"
         if not emp_id:
-            name_match = re.search(r"nhân viên\s+([a-zA-Z0-9à-ỹÀ-Ỹ]+)", msg_lower)
+            name_match = re.search(r"nhân viên\s+([a-zA-Z0-9à-ỹÀ-Ỹ\s]+?)(?:\s+đi|\s+có|\s+vắng|\s+nghỉ|\s*\?|$)", msg_lower)
             if name_match:
-                emp_name_part = name_match.group(1).upper()
-                if emp_name_part in ("A", "B", "C", "D", "E"):
+                emp_name_part = name_match.group(1).strip().upper()
+                if emp_name_part in ("A", "B", "C", "D", "E", "F", "G", "H", "I"):
                     emp_id = f"NV00{ord(emp_name_part) - ord('A') + 1}"
-                else:
-                    emp_id = name_match.group(1)
+                elif emp_name_part == "K":
+                    emp_id = "NV010"
+                elif not any(p in emp_name_part.lower() for p in ["này", "đó", "ấy", "kia"]):
+                    emp_id = name_match.group(1).strip()
 
-        # Default fallback employee if none found but query is asking for someone's attendance
-        if not emp_id and context and context.get("last_employee_id"):
-            emp_id = context["last_employee_id"]
+        # Fallback to context
+        if not emp_id and context:
+            emp_id = context.get("last_employee_id") or context.get("last_mentioned_employee_id")
+
+        # Extract month & year from message if mentioned (e.g. "tháng 8", "tháng 9")
+        month_match = re.search(r"tháng\s+(\d{1,2})", msg_lower)
+        target_month = int(month_match.group(1)) if month_match else 9
+        year_match = re.search(r"năm\s+(\d{4})", msg_lower)
+        target_year = int(year_match.group(1)) if year_match else 2026
 
         # Extract dates YYYY-MM-DD
         dates = re.findall(r"\b(\d{4}-\d{2}-\d{2})\b", message)
@@ -172,7 +180,7 @@ class AttendanceAgent(BaseAgent):
             target_emp = emp_id or "NV001"
             return {
                 "tool": "get_late_arrival_summary",
-                "parameters": {"employee_id": target_emp, "month": 9, "year": 2026},
+                "parameters": {"employee_id": target_emp, "month": target_month, "year": target_year},
                 "needs_more_info": False,
             }
 
@@ -181,7 +189,7 @@ class AttendanceAgent(BaseAgent):
             target_emp = emp_id or "NV001"
             return {
                 "tool": "get_absence_summary",
-                "parameters": {"employee_id": target_emp, "month": 9, "year": 2026},
+                "parameters": {"employee_id": target_emp, "month": target_month, "year": target_year},
                 "needs_more_info": False,
             }
 
@@ -192,18 +200,18 @@ class AttendanceAgent(BaseAgent):
                 "tool": "get_attendance_history",
                 "parameters": {
                     "employee_id": target_emp,
-                    "from_date": from_date or "2026-09-01",
-                    "to_date": to_date or "2026-09-24",
+                    "from_date": from_date or f"{target_year:04d}-{target_month:02d}-01",
+                    "to_date": to_date or f"{target_year:04d}-{target_month:02d}-24",
                 },
                 "needs_more_info": False,
             }
 
         # 4. Monthly attendance / Days worked: "đi làm bao nhiêu ngày", "tháng này đi làm", "chuyên cần tháng"
-        if any(kw in msg_lower for kw in ["đi làm", "di lam", "bao nhiêu ngày", "tháng này"]):
+        if any(kw in msg_lower for kw in ["đi làm", "di lam", "bao nhiêu ngày", "tháng này", "tháng 8", "tháng 9"]):
             target_emp = emp_id or "NV001"
             return {
                 "tool": "get_monthly_attendance",
-                "parameters": {"employee_id": target_emp, "month": 9, "year": 2026},
+                "parameters": {"employee_id": target_emp, "month": target_month, "year": target_year},
                 "needs_more_info": False,
             }
 

@@ -146,9 +146,9 @@ class HiringAgent(BaseAgent):
                 return self._extract_intent_with_llm(message, context)
             except Exception:
                 # Fallback to rule-based matcher on any LLM API error
-                return self._extract_intent_rule_based(message)
+                return self._extract_intent_rule_based(message, context)
 
-        return self._extract_intent_rule_based(message)
+        return self._extract_intent_rule_based(message, context)
 
     def _extract_intent_with_llm(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Use OpenAI LLM to parse intent and return structured JSON."""
@@ -165,17 +165,24 @@ class HiringAgent(BaseAgent):
         content = response.choices[0].message.content
         return json.loads(content)
 
-    def _extract_intent_rule_based(self, message: str) -> Dict[str, Any]:
+    def _extract_intent_rule_based(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Reliable rule-based matcher for development and offline testing."""
         msg = message.lower()
 
         # 1. Candidate detail query: "thông tin ứng viên ...", "mã UV001", "hồ sơ ứng viên"
         uv_match = re.search(r"\b(uv\d{3,4})\b", msg, re.IGNORECASE)
+        candidate_id = None
         if uv_match:
             candidate_id = uv_match.group(1).upper()
+        elif context:
+            candidate_id = context.get("last_candidate_id") or context.get("last_mentioned_candidate_id")
+
+        if uv_match:
             return {"tool": "get_candidate_detail", "parameters": {"candidate_id": candidate_id}}
 
-        if any(k in msg for k in ["thông tin ứng viên", "hồ sơ ứng viên", "chi tiết ứng viên"]):
+        if any(k in msg for k in ["thông tin ứng viên", "hồ sơ ứng viên", "chi tiết ứng viên", "ứng viên này", "bạn này", "người này"]):
+            if candidate_id:
+                return {"tool": "get_candidate_detail", "parameters": {"candidate_id": candidate_id}}
             return {
                 "needs_more_info": True,
                 "clarification_message": "Vui lòng cung cấp mã ứng viên (ví dụ: UV001) hoặc tên ứng viên để tôi tra cứu chi tiết.",

@@ -73,9 +73,11 @@ class MockAttendanceSupport(AttendanceFunctionSupport):
 
     def _resolve_employee_id(self, employee_id_or_name: str) -> str:
         """Resolve employee ID or name (like 'Nhân viên A' -> 'NV001')."""
-        target = employee_id_or_name.strip().upper()
+        target = (employee_id_or_name or "").strip().upper()
         if target.startswith("NV"):
             return target
+        if target in ("ALL", "HÔM NAY", "HOM NAY", "AI", "TOÀN BỘ", "TOAN BO"):
+            return "ALL"
         # Check by name in records
         target_lower = employee_id_or_name.strip().lower()
         if "a" in target_lower or "nguyễn văn a" in target_lower:
@@ -96,7 +98,7 @@ class MockAttendanceSupport(AttendanceFunctionSupport):
         emp_id = self._resolve_employee_id(employee_id)
         results = []
         for r in self.records:
-            if r.get("employee_id") != emp_id:
+            if emp_id != "ALL" and r.get("employee_id") != emp_id:
                 continue
             r_date = r.get("date", "")
             if from_date and r_date < from_date:
@@ -174,7 +176,7 @@ class MockAttendanceSupport(AttendanceFunctionSupport):
 
         late_records = [
             r for r in self.records
-            if r.get("employee_id") == emp_id
+            if (emp_id == "ALL" or r.get("employee_id") == emp_id)
             and r.get("status") == "late"
             and r.get("date", "").startswith(f"{y:04d}-{m:02d}")
         ]
@@ -186,7 +188,7 @@ class MockAttendanceSupport(AttendanceFunctionSupport):
 
         return {
             "employee_id": emp_id,
-            "employee_name": emp_name,
+            "employee_name": emp_name if emp_id != "ALL" else "Toàn bộ nhân viên",
             "month": m,
             "year": y,
             "late_count": len(late_records),
@@ -203,6 +205,23 @@ class MockAttendanceSupport(AttendanceFunctionSupport):
         emp_id = self._resolve_employee_id(employee_id)
         m = month or 9
         y = year or 2026
+
+        if emp_id == "ALL":
+            absent_records = [
+                r for r in self.records
+                if r.get("status") == "absent"
+                and r.get("date", "").startswith(f"{y:04d}-{m:02d}")
+            ]
+            return {
+                "employee_id": "ALL",
+                "employee_name": "Tất cả nhân viên",
+                "month": m,
+                "year": y,
+                "absent_days": len(absent_records),
+                "leave_with_permission": len(absent_records),
+                "leave_without_permission": 0,
+                "details": [dict(r) for r in absent_records],
+            }
 
         absent_records = [
             r for r in self.records

@@ -20,7 +20,7 @@ def strip_diacritics(text: str) -> str:
 INTENT_KEYWORDS = {
     "hiring": ["ứng viên", "phỏng vấn", "tuyển dụng", "vị trí tuyển", "đang tuyển", "ứng tuyển"],
     "attendance": ["đi làm", "đi trễ", "vắng mặt", "chuyên cần", "chấm công"],
-    "employee": ["nhân viên", "phòng ban", "hồ sơ", "nhân sự"],
+    "employee": ["nhân viên", "phòng ban", "hồ sơ nhân sự", "hồ sơ nhân viên", "nhân sự"],
 }
 
 # Bản không dấu của từ khóa, tính sẵn 1 lần khi load module (đỡ tính lại mỗi lần gọi)
@@ -72,6 +72,27 @@ class RootAgent:
 
     def handle(self, request: AgentRequest) -> AgentResponse:
         intent = classify_intent(request.message)
+
+        # Hỗ trợ đa lượt (Multi-turn Context): nếu câu hỏi là lượt tiếp nối (follow-up)
+        # và trong ngữ cảnh Memory đã có last_agent, tự động chuyển tiếp tới agent đó
+        if request.context:
+            last_agent = request.context.get("last_agent") or request.context.get("last_mentioned_agent")
+            msg_lower = (request.message or "").lower()
+            out_of_scope_keywords = ["thời tiết", "thoi tiet", "nấu phở", "nau pho", "bài thơ", "bai tho", "kể chuyện", "chơi game"]
+            is_out_of_scope = any(kw in msg_lower for kw in out_of_scope_keywords)
+
+            if not is_out_of_scope:
+                if last_agent == "hiring" and any(k in msg_lower for k in ["bạn này", "ứng viên này", "ban nay", "ung vien"]):
+                    intent = "hiring"
+                elif intent is None and last_agent:
+                    follow_up_cues = [
+                        "người này", "bạn này", "anh ấy", "cô ấy", "họ", "chi tiết", "xem thêm",
+                        "hồ sơ", "số điện thoại", "sđt", "email", "kinh nghiệm", "kỹ năng",
+                        "mấy ngày", "mấy lần", "lương", "ở đâu", "khi nào", "thế nào", "còn ai",
+                    ]
+                    has_followup_cue = any(cue in msg_lower for cue in follow_up_cues) or (len(msg_lower.split()) <= 6)
+                    if has_followup_cue:
+                        intent = last_agent
 
         if intent is None:
             return AgentResponse(

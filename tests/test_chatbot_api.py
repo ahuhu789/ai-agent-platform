@@ -55,6 +55,24 @@ def test_chat_employee_flow(client):
 
 
 
+def test_chat_multi_turn_memory_retention(client):
+    # Lượt 1: Hỏi về Nhân viên A thuộc phòng ban nào (Employee domain)
+    res1 = client.post("/chat", json={"message": "Nhân viên A thuộc phòng ban nào?"})
+    assert res1.status_code == 200
+    conv_id = res1.json()["conversation_id"]
+    assert "Phòng Kỹ thuật" in res1.json()["reply"]
+
+    # Lượt 2: Hỏi tiếp về chuyên cần trong cùng conversation nhưng KHÔNG nhắc lại tên/mã nhân viên!
+    # Hệ thống phải nhớ context từ Lượt 1 để trả lời chính xác số ngày đi làm của Nhân viên A (NV001)!
+    res2 = client.post("/chat", json={"conversation_id": conv_id, "message": "Tháng này đi làm bao nhiêu ngày?"})
+    assert res2.status_code == 200
+    data2 = res2.json()
+    assert data2["success"] is True
+    assert data2["metadata"]["intent"] == "attendance"
+    assert "18" in data2["reply"]
+    assert "Nguyễn Văn A" in data2["reply"]
+
+
 def test_chat_fallback_out_of_scope(client):
     response = client.post("/chat", json={"message": "Thời tiết hôm nay thế nào?"})
     assert response.status_code == 200

@@ -148,11 +148,24 @@ class EmployeeAgent(BaseAgent):
         if id_match:
             emp_id = id_match.group(1).upper().replace(" ", "").replace("-", "")
 
+        # Recover from context if available
+        ctx_emp_id = None
+        ctx_emp_name = None
+        if context:
+            ctx_emp_id = context.get("last_employee_id") or context.get("last_mentioned_employee_id")
+            ctx_emp_name = context.get("last_employee_name") or context.get("last_mentioned_employee_name")
+
+        emp_id = emp_id or ctx_emp_id
+
         # 1. "Nhân viên A thuộc phòng ban nào?" / "thuộc phòng ban nào" / "ở phòng nào"
         if any(kw in msg_lower for kw in ["thuộc phòng ban", "ở phòng ban", "ở phòng nào", "thuộc khoa nào"]):
             # Extract employee name or identifier
             name_match = re.search(r"(?:nhân viên|thông tin|bạn)\s+([a-zA-Z0-9\s_à-ỹÀ-Ỹ]+?)(?:\s+thuộc|\s+ở|\s*\?|$)", message, re.IGNORECASE)
-            identifier = emp_id or (name_match.group(1).strip() if name_match else "A")
+            extracted_name = name_match.group(1).strip() if name_match else None
+            if extracted_name and any(p in extracted_name.lower() for p in ["này", "đó", "ấy", "kia"]):
+                extracted_name = None
+
+            identifier = emp_id or extracted_name or ctx_emp_name or "A"
             return {
                 "tool": "get_employee_department",
                 "parameters": {"identifier": identifier},
@@ -160,7 +173,7 @@ class EmployeeAgent(BaseAgent):
             }
 
         # 2. "Tìm thông tin nhân viên có mã ..." / "xem hồ sơ nhân viên"
-        if emp_id and any(kw in msg_lower for kw in ["thông tin", "hồ sơ", "chi tiết", "mã", "tìm"]):
+        if emp_id and any(kw in msg_lower for kw in ["thông tin", "hồ sơ", "chi tiết", "mã", "tìm", "người này", "bạn này"]):
             return {
                 "tool": "get_employee_profile",
                 "parameters": {"employee_id": emp_id},
@@ -168,12 +181,11 @@ class EmployeeAgent(BaseAgent):
             }
 
         # If asking for profile without ID
-        if any(kw in msg_lower for kw in ["xem hồ sơ", "chi tiết nhân viên"]) and not emp_id:
-            # Check context
-            if context and context.get("last_employee_id"):
+        if any(kw in msg_lower for kw in ["xem hồ sơ", "chi tiết nhân viên", "thông tin nhân viên"]):
+            if emp_id:
                 return {
                     "tool": "get_employee_profile",
-                    "parameters": {"employee_id": context["last_employee_id"]},
+                    "parameters": {"employee_id": emp_id},
                     "needs_more_info": False,
                 }
             return {
