@@ -14,7 +14,8 @@ from shared.abstractions.agent import AgentRequest
 from agents.root.agent_registry import AgentRegistry
 from agents.root.root_agent import RootAgent
 from agents.hiring.hiring_agent import HiringAgent
-from agents.root.mock_agents import MockAttendanceAgent, MockEmployeeAgent
+from agents.attendance.attendance_agent import AttendanceAgent
+from agents.employee.employee_agent import EmployeeAgent
 from shared.memory.factory import create_memory_store
 from shared.abstractions.memory import Message
 from apps.chatbot.main import app
@@ -24,14 +25,25 @@ from apps.chatbot.main import app
 def root_agent():
     registry = AgentRegistry()
     registry.register(HiringAgent(openai_client=False))
-    registry.register(MockAttendanceAgent())
-    registry.register(MockEmployeeAgent())
+    registry.register(AttendanceAgent(openai_client=False))
+    registry.register(EmployeeAgent(openai_client=False))
     return RootAgent(registry)
 
 
 @pytest.fixture
 def hiring_agent():
     return HiringAgent(openai_client=False)
+
+
+@pytest.fixture
+def attendance_agent():
+    return AttendanceAgent(openai_client=False)
+
+
+@pytest.fixture
+def employee_agent():
+    return EmployeeAgent(openai_client=False)
+
 
 
 @pytest.fixture
@@ -144,7 +156,52 @@ def test_hiring_tool_recruitment_summary(hiring_agent):
 
 
 # =====================================================================
-# 3. MEMORYSTORE MULTI-TURN CONTEXT BENCHMARK
+# 3. ATTENDANCE & EMPLOYEE AGENT BENCHMARK
+# =====================================================================
+
+def test_attendance_benchmark_days_worked(attendance_agent):
+    req = AgentRequest(message="Tháng này nhân viên A đi làm bao nhiêu ngày?")
+    res = attendance_agent.handle(req)
+    assert res.success is True
+    assert res.data["tool"] == "get_monthly_attendance"
+    assert "18" in res.data["response"]
+    assert "Nguyễn Văn A" in res.data["response"]
+
+
+def test_attendance_benchmark_late_summary(attendance_agent):
+    req = AgentRequest(message="Nhân viên A đi trễ bao nhiêu lần?")
+    res = attendance_agent.handle(req)
+    assert res.success is True
+    assert res.data["tool"] == "get_late_arrival_summary"
+    assert "2 lần" in res.data["response"]
+
+
+def test_employee_benchmark_department_lookup(employee_agent):
+    req = AgentRequest(message="Nhân viên Nguyễn Văn A thuộc phòng ban nào?")
+    res = employee_agent.handle(req)
+    assert res.success is True
+    assert res.data["tool"] == "get_employee_department"
+    assert "Phòng Kỹ thuật" in res.data["response"]
+
+
+def test_employee_benchmark_department_summary(employee_agent):
+    req = AgentRequest(message="Phòng ban Kỹ thuật có bao nhiêu nhân viên?")
+    res = employee_agent.handle(req)
+    assert res.success is True
+    assert res.data["tool"] == "get_employee_summary"
+    assert "5" in res.data["response"]
+
+
+def test_employee_benchmark_profile_lookup(employee_agent):
+    req = AgentRequest(message="Tìm thông tin nhân viên có mã NV001")
+    res = employee_agent.handle(req)
+    assert res.success is True
+    assert res.data["tool"] == "get_employee_profile"
+    assert "Nguyễn Văn A" in res.data["response"]
+
+
+# =====================================================================
+# 4. MEMORYSTORE MULTI-TURN CONTEXT BENCHMARK
 # =====================================================================
 
 def test_memory_multi_turn_retention():
@@ -170,7 +227,7 @@ def test_memory_multi_turn_retention():
 
 
 # =====================================================================
-# 4. CHAT API INTEGRATION BENCHMARK
+# 5. CHAT API INTEGRATION BENCHMARK
 # =====================================================================
 
 def test_chat_api_response_structure(api_client):
@@ -181,3 +238,4 @@ def test_chat_api_response_structure(api_client):
     assert data["metadata"]["tool_used"] == "list_job_openings"
     assert "conversation_id" in data
     assert len(data.get("messages", [])) >= 2
+

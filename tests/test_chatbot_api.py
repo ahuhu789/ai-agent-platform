@@ -34,12 +34,25 @@ def test_chat_hiring_flow(client):
     assert len(data["messages"]) == 2  # 1 user + 1 assistant
 
 
-def test_chat_unsupported_attendance_flow(client):
+def test_chat_attendance_flow(client):
     response = client.post("/chat", json={"message": "Tháng này nhân viên A đi làm bao nhiêu ngày?"})
     assert response.status_code == 200
     data = response.json()
-    assert data["success"] is False
-    assert "Phân hệ 'attendance' hiện chưa sẵn sàng" in data["reply"]
+    assert data["success"] is True
+    assert data["metadata"]["intent"] == "attendance"
+    assert data["metadata"]["tool_used"] == "get_monthly_attendance"
+    assert "18" in data["reply"]
+
+
+def test_chat_employee_flow(client):
+    response = client.post("/chat", json={"message": "Nhân viên A thuộc phòng ban nào?"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["metadata"]["intent"] == "employee"
+    assert data["metadata"]["tool_used"] == "get_employee_department"
+    assert "Phòng Kỹ thuật" in data["reply"]
+
 
 
 def test_chat_fallback_out_of_scope(client):

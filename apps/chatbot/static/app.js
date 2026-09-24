@@ -227,13 +227,14 @@ function appendMessageToDOM(role, content, metadata = null) {
     traceContainer.className = "trace-badge-container";
 
     const routedBy = metadata.routed_by || "root_agent";
-    const agent = metadata.agent || metadata.source || "hiring";
+    const agent = metadata.agent || metadata.source || metadata.intent || "hiring";
     const tool = metadata.tool_used;
+    const badgeClass = `badge-${agent}`;
 
     traceContainer.innerHTML = `
       <span class="trace-badge badge-root">🧭 ${routedBy}</span>
       <span class="badge-arrow">➔</span>
-      <span class="trace-badge badge-hiring">🤖 ${agent}_agent</span>
+      <span class="trace-badge ${badgeClass}">🤖 ${agent}_agent</span>
       ${tool ? `<span class="badge-arrow">➔</span><span class="trace-badge badge-tool">⚙️ ${tool}</span>` : ""}
     `;
     wrapper.appendChild(traceContainer);
