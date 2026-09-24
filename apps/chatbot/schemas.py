@@ -14,6 +14,7 @@ class MessageOut(BaseModel):
 # ---------- Conversation ----------
 class ConversationCreate(BaseModel):
     title: Optional[str] = Field(default=None, examples=["Hỏi đáp Tuyển dụng"])
+    user_id: Optional[str] = Field(default=None, examples=["default_user"])
 
 
 class ConversationOut(BaseModel):

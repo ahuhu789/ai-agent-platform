@@ -12,6 +12,7 @@ except ImportError:
     pass
 
 from shared.abstractions.agent import AgentRequest, AgentResponse, BaseAgent
+from shared.abstractions.llm import BaseLLM, LLMRequest
 from mcp_servers.employee.tools import EmployeeTools
 from .prompts import EMPLOYEE_AGENT_SYSTEM_PROMPT, INTENT_EXTRACTION_PROMPT
 
@@ -25,23 +26,14 @@ class EmployeeAgent(BaseAgent):
         self,
         mcp_client: Optional[Any] = None,
         tools: Optional[EmployeeTools] = None,
+        llm: Optional[BaseLLM] = None,
         openai_client: Optional[Any] = None,
         model_name: Optional[str] = None,
     ):
         """Initialize EmployeeAgent."""
         self.mcp_client = mcp_client
         self.tools = tools or EmployeeTools()
-
-        if openai_client is None and os.getenv("OPENAI_API_KEY"):
-            try:
-                from openai import OpenAI
-                openai_client = OpenAI(
-                    api_key=os.getenv("OPENAI_API_KEY"),
-                    base_url=os.getenv("OPENAI_BASE_URL") or None,
-                )
-            except Exception:
-                openai_client = None
-
+        self.llm = llm
         self.openai_client = openai_client
         self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
@@ -89,13 +81,14 @@ class EmployeeAgent(BaseAgent):
             synthesized_answer = self._synthesize_response(message, tool_name, params, tool_result)
 
             return AgentResponse(
-                success=True,
+                success=tool_result.get("success", False),
                 data={
                     "response": synthesized_answer,
                     "tool": tool_name,
                     "parameters": params,
                     "raw_tool_result": tool_result,
                 },
+                error=tool_result.get("error"),
                 metadata={
                     "source": "employee",
                     "agent": self.name,
@@ -113,7 +106,7 @@ class EmployeeAgent(BaseAgent):
 
     def _extract_intent(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Extract tool and parameters using LLM or rule-based fallback."""
-        if self.openai_client:
+        if self.llm or self.openai_client:
             try:
                 return self._extract_intent_with_llm(message, context)
             except Exception:
@@ -121,7 +114,7 @@ class EmployeeAgent(BaseAgent):
         return self._extract_intent_rule_based(message, context)
 
     def _extract_intent_with_llm(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Call OpenAI LLM to parse intent and return structured JSON."""
+        """Call LLM or OpenAI client to parse intent and return structured JSON."""
         messages = [
             {"role": "system", "content": INTENT_EXTRACTION_PROMPT},
             {"role": "user", "content": f"Yêu cầu người dùng: {message}"},
@@ -129,14 +122,30 @@ class EmployeeAgent(BaseAgent):
         if context:
             messages.insert(1, {"role": "system", "content": f"Ngữ cảnh phiên hội thoại: {json.dumps(context, ensure_ascii=False)}"})
 
-        response = self.openai_client.chat.completions.create(
-            model=self.model_name,
-            messages=messages,
-            response_format={"type": "json_object"},
-            temperature=0.0,
-        )
-        content = response.choices[0].message.content
-        return json.loads(content)
+        if self.llm:
+            req = LLMRequest(
+                messages=messages,
+                model=self.model_name,
+                temperature=0.0,
+            )
+            resp = self.llm.generate(req)
+            content = resp.content.strip()
+            if content.startswith("```"):
+                content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
+                content = re.sub(r"\n?```$", "", content).strip()
+            return json.loads(content)
+
+        if self.openai_client:
+            response = self.openai_client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.0,
+            )
+            content = response.choices[0].message.content
+            return json.loads(content)
+
+        return self._extract_intent_rule_based(message, context)
 
     def _extract_intent_rule_based(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Fast offline rule-based intent parsing."""
@@ -239,7 +248,12 @@ class EmployeeAgent(BaseAgent):
         """Execute tool via MCP Client or direct tool dispatch."""
         if self.mcp_client:
             try:
-                return self.mcp_client.call_tool(tool_name, parameters)
+                if hasattr(self.mcp_client, "call_tool_sync"):
+                    res = self.mcp_client.call_tool_sync(self.name, tool_name, parameters)
+                    if hasattr(res, "success"):
+                        return {"success": res.success, "data": res.data, "error": res.error, "metadata": getattr(res, "metadata", {})}
+                    return res
+                return self.mcp_client.call_tool(self.name, tool_name, parameters)
             except Exception:
                 pass
 
@@ -256,7 +270,7 @@ class EmployeeAgent(BaseAgent):
         tool_result: Dict[str, Any],
     ) -> str:
         """Synthesize tool result into user-facing response."""
-        if self.openai_client:
+        if self.llm or self.openai_client:
             try:
                 return self._synthesize_response_with_llm(message, tool_name, parameters, tool_result)
             except Exception:
@@ -270,7 +284,7 @@ class EmployeeAgent(BaseAgent):
         parameters: Dict[str, Any],
         tool_result: Dict[str, Any],
     ) -> str:
-        """Call LLM to format natural response."""
+        """Call LLM or OpenAI client to format natural response."""
         prompt = (
             f"{EMPLOYEE_AGENT_SYSTEM_PROMPT}\n\n"
             f"Câu hỏi của người dùng: {message}\n"
@@ -279,12 +293,26 @@ class EmployeeAgent(BaseAgent):
             f"Kết quả trả về từ công cụ:\n{json.dumps(tool_result, ensure_ascii=False, indent=2)}\n\n"
             "Hãy trả lời câu hỏi của người dùng dựa trên kết quả trên một cách tự nhiên, chính xác, định dạng Markdown đẹp mắt."
         )
-        response = self.openai_client.chat.completions.create(
-            model=self.model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-        return response.choices[0].message.content
+
+        if self.llm:
+            req = LLMRequest(
+                messages=[{"role": "user", "content": prompt}],
+                model=self.model_name,
+                temperature=0.2,
+            )
+            resp = self.llm.generate(req)
+            if resp.content and resp.content.strip():
+                return resp.content.strip()
+
+        if self.openai_client:
+            response = self.openai_client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            return response.choices[0].message.content
+
+        return self._synthesize_response_template(tool_name, parameters, tool_result)
 
     def _synthesize_response_template(
         self,

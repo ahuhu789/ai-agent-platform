@@ -12,6 +12,7 @@ except ImportError:
     pass
 
 from shared.abstractions.agent import AgentRequest, AgentResponse, BaseAgent
+from shared.abstractions.llm import BaseLLM, LLMRequest
 from mcp_servers.hiring.tools import HiringTools
 from .prompts import HIRING_AGENT_SYSTEM_PROMPT, INTENT_EXTRACTION_PROMPT
 
@@ -25,6 +26,7 @@ class HiringAgent(BaseAgent):
         self,
         mcp_client: Optional[Any] = None,
         tools: Optional[HiringTools] = None,
+        llm: Optional[BaseLLM] = None,
         openai_client: Optional[Any] = None,
         model_name: Optional[str] = None,
     ):
@@ -33,23 +35,13 @@ class HiringAgent(BaseAgent):
         Args:
             mcp_client: Optional MCP Client (from Core team) to call MCP Server.
             tools: Optional direct HiringTools instance (used when MCP Client is not yet available).
-            openai_client: Optional OpenAI client instance for LLM intent parsing & synthesis.
+            llm: Optional BaseLLM provider injected from LLMFactory.
+            openai_client: Optional OpenAI client instance for legacy backward compatibility.
             model_name: OpenAI model to use.
         """
         self.mcp_client = mcp_client
         self.tools = tools or HiringTools()
-        
-        # Auto-initialize OpenAI client from environment if available and not explicitly provided
-        if openai_client is None and os.getenv("OPENAI_API_KEY"):
-            try:
-                from openai import OpenAI
-                openai_client = OpenAI(
-                    api_key=os.getenv("OPENAI_API_KEY"),
-                    base_url=os.getenv("OPENAI_BASE_URL") or None,
-                )
-            except Exception:
-                openai_client = None
-
+        self.llm = llm
         self.openai_client = openai_client
         self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
@@ -125,10 +117,15 @@ class HiringAgent(BaseAgent):
 
     def _execute_tool(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute tool through MCP Client if configured, or fall back to internal tool dispatcher."""
-        if self.mcp_client and hasattr(self.mcp_client, "call_tool"):
-            # When Core team's MCP Client is available
+        if self.mcp_client:
             try:
-                return self.mcp_client.call_tool("hiring", tool_name, params)
+                if hasattr(self.mcp_client, "call_tool_sync"):
+                    res = self.mcp_client.call_tool_sync("hiring", tool_name, params)
+                    if hasattr(res, "success"):
+                        return {"success": res.success, "data": res.data, "error": res.error, "metadata": getattr(res, "metadata", {})}
+                    return res
+                if hasattr(self.mcp_client, "call_tool"):
+                    return self.mcp_client.call_tool("hiring", tool_name, params)
             except Exception as e:
                 return {"success": False, "error": f"Lỗi gọi MCP Client: {str(e)}", "data": None}
 
@@ -140,8 +137,8 @@ class HiringAgent(BaseAgent):
         return executor(**params)
 
     def _extract_intent(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Extract tool and parameters using OpenAI LLM if available, otherwise rule-based matcher."""
-        if self.openai_client and (os.getenv("OPENAI_API_KEY") or getattr(self.openai_client, "api_key", None)):
+        """Extract tool and parameters using injected LLM if available, otherwise rule-based matcher."""
+        if self.llm or (self.openai_client and (os.getenv("OPENAI_API_KEY") or getattr(self.openai_client, "api_key", None))):
             try:
                 return self._extract_intent_with_llm(message, context)
             except Exception:
@@ -151,19 +148,36 @@ class HiringAgent(BaseAgent):
         return self._extract_intent_rule_based(message, context)
 
     def _extract_intent_with_llm(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Use OpenAI LLM to parse intent and return structured JSON."""
+        """Use LLM (or fallback OpenAI client) to parse intent and return structured JSON."""
         messages = [
             {"role": "system", "content": INTENT_EXTRACTION_PROMPT},
             {"role": "user", "content": f"Yêu cầu: {message}\nNgữ cảnh trước: {json.dumps(context or {}, ensure_ascii=False)}"},
         ]
-        response = self.openai_client.chat.completions.create(
-            model=self.model_name,
-            messages=messages,
-            temperature=0.0,
-            response_format={"type": "json_object"},
-        )
-        content = response.choices[0].message.content
-        return json.loads(content)
+
+        if self.llm:
+            req = LLMRequest(
+                messages=messages,
+                model=self.model_name,
+                temperature=0.0,
+            )
+            resp = self.llm.generate(req)
+            content = resp.content.strip()
+            if content.startswith("```"):
+                content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
+                content = re.sub(r"\n?```$", "", content).strip()
+            return json.loads(content)
+
+        if self.openai_client:
+            response = self.openai_client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+            content = response.choices[0].message.content
+            return json.loads(content)
+
+        return self._extract_intent_rule_based(message, context)
 
     def _extract_intent_rule_based(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Reliable rule-based matcher for development and offline testing."""
@@ -265,21 +279,37 @@ class HiringAgent(BaseAgent):
         data = tool_result.get("data", {})
 
         # 1. Natural LLM Synthesis: if LLM client is available, format answer exactly as requested
-        if self.openai_client:
+        system_prompt = (
+            "Bạn là Trợ lý Tuyển dụng (Hiring Agent) thông minh, thân thiện của hệ thống FME.\n"
+            "Nhiệm vụ: Dựa vào DỮ LIỆU THỰC TẾ từ Tool vừa gọi để trả lời người dùng một cách chính xác, tự nhiên bằng tiếng Việt.\n"
+            "QUY TẮC BẮT BUỘC:\n"
+            "- Tuân thủ chính xác yêu cầu của người dùng (ví dụ: nếu yêu cầu 'chỉ lấy tên' thì chỉ xuất danh sách tên, nếu hỏi 'có mấy người' thì trả lời số lượng).\n"
+            "- Không bịa đặt thông tin ngoài dữ liệu được cung cấp.\n"
+            "- Định dạng câu trả lời rõ ràng, dễ đọc (dùng gạch đầu dòng Markdown nếu liệt kê)."
+        )
+        user_prompt = (
+            f"Câu hỏi của người dùng: {user_message}\n\n"
+            f"Tool đã gọi: {tool_name}\n"
+            f"Dữ liệu Tool trả về:\n{json.dumps(data, ensure_ascii=False, indent=2)}"
+        )
+
+        if self.llm:
             try:
-                system_prompt = (
-                    "Bạn là Trợ lý Tuyển dụng (Hiring Agent) thông minh, thân thiện của hệ thống FME.\n"
-                    "Nhiệm vụ: Dựa vào DỮ LIỆU THỰC TẾ từ Tool vừa gọi để trả lời người dùng một cách chính xác, tự nhiên bằng tiếng Việt.\n"
-                    "QUY TẮC BẮT BUỘC:\n"
-                    "- Tuân thủ chính xác yêu cầu của người dùng (ví dụ: nếu yêu cầu 'chỉ lấy tên' thì chỉ xuất danh sách tên, nếu hỏi 'có mấy người' thì trả lời số lượng).\n"
-                    "- Không bịa đặt thông tin ngoài dữ liệu được cung cấp.\n"
-                    "- Định dạng câu trả lời rõ ràng, dễ đọc (dùng gạch đầu dòng Markdown nếu liệt kê)."
+                req = LLMRequest(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    model=self.model_name,
+                    temperature=0.3,
                 )
-                user_prompt = (
-                    f"Câu hỏi của người dùng: {user_message}\n\n"
-                    f"Tool đã gọi: {tool_name}\n"
-                    f"Dữ liệu Tool trả về:\n{json.dumps(data, ensure_ascii=False, indent=2)}"
-                )
+                resp = self.llm.generate(req)
+                if resp.content and resp.content.strip():
+                    return resp.content.strip()
+            except Exception:
+                pass
+        elif self.openai_client:
+            try:
                 response = self.openai_client.chat.completions.create(
                     model=self.model_name,
                     messages=[

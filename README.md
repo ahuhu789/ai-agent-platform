@@ -1,41 +1,55 @@
-# AI Agent Platform (FME AI Chatbot)
+# AI Agent Platform (FME Multi-Agent System)
 
-Nền tảng hệ thống AI Agent hỗ trợ hỏi đáp và truy vấn dữ liệu tự động cho các phân hệ nghiệp vụ doanh nghiệp (Tuyển dụng, Chuyên cần, Nhân sự) thông qua giao thức **Model Context Protocol (MCP)** và kiến trúc **Multi-Agent**.
+Nền tảng hệ thống AI Agent hỗ trợ hỏi đáp và truy vấn dữ liệu tự động cho các phân hệ nghiệp vụ doanh nghiệp (**Tuyển dụng**, **Chuyên cần**, **Nhân sự**) thông qua giao thức **Model Context Protocol (MCP)** và kiến trúc **Multi-Agent**.
 
 ---
 
-## 1. Tổng quan dự án
+## 1. Kiến trúc hệ thống & Luồng dữ liệu
 
-Hệ thống được phát triển bởi nhóm thực tập sinh dự án AI Agent Platform (9 thành viên). Mục tiêu trọng tâm là hoàn thiện luồng xử lý từ đầu vào người dùng đến các công cụ phân hệ:
+Hệ thống được phát triển theo đúng chuẩn kiến trúc phân lớp từ `docs/AI_Plan.pdf`:
 
+### 1.1. Sơ đồ tuần tự (Sequence Diagram)
 ```mermaid
-graph TD
-    User([Người dùng / Frontend]) -->|HTTP POST /chat| ChatAPI["Chat API (FastAPI)"]
-    ChatAPI -->|Load Memory & Route| RootAgent["Root Agent (Core Chatbot)"]
-    RootAgent -->|AgentRequest| SubAgent{"Lựa chọn Domain Agent"}
-    SubAgent -->|Tuyển dụng| HiringAgent["Hiring Agent"]
-    SubAgent -->|Chuyên cần| AttendanceAgent["Attendance Agent"]
-    SubAgent -->|Nhân sự| EmployeeAgent["Employee Agent"]
-    
-    HiringAgent -->|Intent / Tool Call| MCPClient["MCP Client (Core)"]
-    AttendanceAgent -->|Intent / Tool Call| MCPClient
-    EmployeeAgent -->|Intent / Tool Call| MCPClient
-    
-    MCPClient -->|stdio / SSE| HiringMCP["Hiring MCP Server"]
-    MCPClient -->|stdio / SSE| AttendanceMCP["Attendance MCP Server"]
-    MCPClient -->|stdio / SSE| EmployeeMCP["Employee MCP Server"]
-    
-    HiringMCP --> HiringSupport["Hiring Function Support (Mock / API)"]
-    AttendanceMCP --> AttendanceSupport["Attendance Function Support"]
-    EmployeeMCP --> EmployeeSupport["Employee Function Support"]
+sequenceDiagram
+    autonumber
+    actor User as Người dùng
+    participant API as Chat Router (FastAPI)
+    participant Svc as ChatService
+    participant Mem as MemoryStore (In-Memory/Redis)
+    participant Root as RootAgent
+    participant Agent as Domain Agent (Hiring/Attendance/Employee)
+    participant LLM as LLM Provider (LLMFactory)
+    participant MCPClient as MultiServerMCPClient
+    participant MCPServer as MCP Server (stdio transport)
+
+    User->>API: POST /chat {message, conversation_id, user_id}
+    API->>Svc: process_chat(...)
+    Svc->>Mem: Lưu tin nhắn & xây dựng Multi-turn Context
+    Svc->>Root: handle(AgentRequest)
+    Root->>Agent: Điều phối tới Domain Agent phù hợp
+    Agent->>LLM: Trích xuất ý định / tham số (Intent & Entity Parsing)
+    Agent->>MCPClient: call_tool_sync(server_name, tool_name, params)
+    MCPClient->>MCPServer: JSON-RPC over stdio
+    MCPServer-->>MCPClient: Kết quả Tool chuẩn hóa
+    MCPClient-->>Agent: MCPToolResult(success, data, error)
+    Agent->>LLM: Tổng hợp câu trả lời tự nhiên (Response Synthesis)
+    Agent-->>Root: AgentResponse(success, data, metadata)
+    Root-->>Svc: AgentResponse
+    Svc->>Mem: Lưu Assistant Message & cập nhật Entity Context
+    Svc-->>API: ChatResponse
+    API-->>User: JSON Response
 ```
 
-### Nguyên tắc phân chia trách nhiệm (`docs/AI_Plan.pdf`):
-- **Business Logic**: Nằm tại `Function Support` của từng phân hệ (Mock data hoặc REST API backend).
-- **Giao tiếp Tool**: Nằm tại `MCP Server` và các `MCP Tool` tương ứng.
-- **Phân tích yêu cầu & chọn Tool**: Nằm tại `Agent` của từng phân hệ.
-- **Điều phối Agent**: Nằm tại `Root Agent`.
-- **Hội thoại, Quản lý Session & API Gateway**: Nằm tại `Core Chatbot`.
+### 1.2. Nguyên tắc phân chia trách nhiệm (Separation of Concerns)
+- **Controller / Router** (`apps/chatbot/routers/`): Tiếp nhận request HTTP, kiểm tra quyền sở hữu `user_id`, validate schema Pydantic.
+- **Service Layer** (`apps/chatbot/services/`): Quản lý luồng nghiệp vụ chat, bóc tách lỗi, lưu trữ lịch sử và ngữ cảnh đa lượt.
+- **Root Agent** (`agents/root/`): Phân loại câu hỏi thuộc phân hệ nào và chuyển tiếp tới Domain Agent tương ứng.
+- **Domain Agents** (`agents/hiring/`, `agents/attendance/`, `agents/employee/`): Nhận request, phối hợp với LLM để bóc tách tham số và gọi MCP Tool qua MCP Client.
+- **MCP Client** (`shared/clients/`): Quản lý kết nối tới các MCP Server qua giao thức `stdio`, xử lý chuyển đổi kết quả chuẩn hóa `MCPToolResult`.
+- **MCP Servers & Tools** (`mcp_servers/`): Cung cấp các công cụ tra cứu nghiệp vụ độc lập, giao tiếp chuẩn MCP.
+- **Function Support**: Tầng truy xuất dữ liệu nghiệp vụ (hỗ trợ chuyển đổi giữa Mock Data và REST API backend thật).
+- **LLM Layer** (`shared/llm/`): Factory hỗ trợ OpenAI, Groq, Ollama, HuggingFace và MockLLM phục vụ test offline.
+- **Memory & Cache** (`shared/memory/`, `shared/cache/`): Quản lý lịch sử trò chuyện đa lượt, entity context theo user và cache RAM có TTL.
 
 ---
 
@@ -44,156 +58,120 @@ graph TD
 ```
 AI Agent platform/
 ├── apps/
-│   └── chatbot/                  # Chat API (FastAPI), routers, services
-├── agents/                       # Các Domain Agents kế thừa BaseAgent
-│   ├── root/                     # Root Agent điều phối (Core Chatbot)
-│   ├── hiring/                   # Hiring Agent (Phân hệ Tuyển dụng - Đã hoàn thiện)
+│   └── chatbot/                  # Chat API (FastAPI) & Static Web UI
+│       ├── routers/              # chat.py, conversations.py (User Isolation & IDOR protection)
+│       ├── services/             # chat_service.py (Business Logic Service Layer)
+│       ├── static/               # HTML/CSS/JS Chatbot Web UI
+│       ├── agent_setup.py        # Dependency Injection (MCPClient + LLMFactory -> Agents)
+│       └── memory_store.py       # Memory Store Adapter
+├── agents/                       # Domain Agents kế thừa BaseAgent
+│   ├── root/                     # Root Agent điều phối, AgentRegistry
+│   ├── hiring/                   # Hiring Agent (Phân hệ Tuyển dụng)
 │   ├── attendance/               # Attendance Agent (Phân hệ Chuyên cần)
 │   └── employee/                 # Employee Agent (Phân hệ Nhân sự)
-├── mcp_servers/                  # Các MCP Server độc lập theo chuẩn MCP
-│   ├── hiring/                   # Hiring MCP Server & 5 Tools (Đã hoàn thiện)
-│   ├── attendance/               # Attendance MCP Server & Tools
-│   └── employee/                 # Employee MCP Server & Tools
-├── shared/                       # Thư viện & Abstractions dùng chung toàn hệ thống
-│   ├── abstractions/             # Interfaces trừu tượng bắt buộc tuân thủ
-│   │   ├── agent.py              # BaseAgent, AgentRequest, AgentResponse
-│   │   ├── memory.py             # BaseMemoryStore
-│   │   ├── llm.py                # BaseLLM, LLMRequest, LLMResponse
-│   │   ├── cache.py              # BaseCache
-│   │   └── mcp_client.py         # BaseMCPClient, ToolDefinition, MCPToolResult
-│   ├── llm/                      # LLM Factory & Provider implementations
-│   ├── memory/                   # InMemoryStore & RedisMemoryStore
-│   └── cache/                    # In-memory & Redis Cache
-├── tests/                        # Bộ kiểm thử tự động (Pytest)
-│   ├── test_hiring_mcp.py        # 6 unit tests cho MCP Tools & Validators
-│   └── test_hiring_agent.py      # 8 unit tests cho Hiring Agent
-├── docs/                         # Tài liệu đặc tả kỹ thuật dự án
-│   ├── AI_Plan.pdf               # Bản thảo kế hoạch hệ thống tổng thể
-│   ├── hiring_tools.md           # Đặc tả chi tiết 5 MCP Tools Tuyển dụng
-│   └── AI Chatbot Plan.xlsx      # Kế hoạch chi tiết, tiến độ & phân công 9 thành viên
-├── demo.py                       # Kịch bản demo 7 câu hỏi phân hệ Tuyển dụng
-├── chat.py                       # CLI Chat tương tác thử nghiệm trực tiếp
-├── requirements.txt              # Danh sách thư viện Python phụ thuộc
-├── .env.example                  # Mẫu biến môi trường (API Key, URL, v.v.)
-├── .gitignore                    # Bỏ qua secret (.env), cache, pycache
+├── mcp_servers/                  # MCP Servers độc lập theo chuẩn MCP SDK
+│   ├── hiring/                   # 5 Tools: Ứng viên, Lịch phỏng vấn, Vị trí tuyển dụng, Thống kê
+│   ├── attendance/               # 5 Tools: Ngày công, Đi trễ, Vắng mặt, Lịch sử chấm công, Tỷ lệ chuyên cần
+│   └── employee/                 # 5 Tools: Tìm nhân viên, Hồ sơ chi tiết, Phòng ban, Danh sách phòng
+├── shared/                       # Module dùng chung toàn hệ thống
+│   ├── abstractions/             # Interface trừu tượng (BaseAgent, BaseLLM, BaseMCPClient, MemoryStore, BaseCache)
+│   ├── clients/                  # MultiServerMCPClient (kết nối đa server stdio/async)
+│   ├── llm/                      # LLMFactory, Providers (OpenAI, Ollama, HuggingFace), MockLLM
+│   ├── memory/                   # InMemoryStore & RedisMemoryStore (User-context & Agent-context)
+│   ├── cache/                    # InMemoryCache (Hỗ trợ TTL và thread-safe)
+│   └── logger/                   # Centralized logger cấu hình stream sys.stderr
+├── tests/                        # 161 automated unit, benchmark & integration tests
+├── docs/                         # Tài liệu đặc tả kỹ thuật dự án (AI_Plan.pdf, hiring_tools.md, etc.)
+├── requirements.txt              # Thư viện phụ thuộc
+├── .env.example                  # File cấu hình mẫu đầy đủ các biến môi trường
 └── README.md                     # Tài liệu hướng dẫn dự án
 ```
 
 ---
 
-## 3. Phân công nhiệm vụ thành viên (`docs/AI Chatbot Plan.xlsx`)
+## 3. Các phân hệ nghiệp vụ & Công cụ MCP
 
-| STT | Phân hệ / Nhóm | Thành viên phụ trách | Nhiệm vụ chính | Mã Task | Thư mục mã nguồn |
-|:---:|---|---|---|:---:|---|
-| 1 | **Core Chatbot** | Lê Thị Trà My | Root Agent, routing rule-based/LLM, Agent Registry | RA-01 → RA-06 | `agents/root/` |
-| 2 | **Core Chatbot** | Vũ Công Nguyên Khang | MemoryStore (In-memory, Redis), quản lý Session | MEM-01 | `shared/memory/` |
-| 3 | **Core Chatbot** | Hoàng Minh Anh | LLM Interface, LLM Factory, chuẩn hóa Request/Response | LLM-01 → LLM-04 | `shared/llm/` |
-| 4 | **Core Chatbot** | Thành viên 4 | FastAPI Chat endpoint (`/chat`, `/conversations`), Swagger | API-01 → API-05 | `apps/chatbot/` |
-| 5 | **Core Chatbot** | Thành viên 5 | BaseCache, MCP Client kết nối đa Server qua stdio/SSE | MCP-01 → MCP-04 | `shared/cache/`, `shared/clients/` |
-| 6 | **Tuyển dụng** | Nguyễn Huy Thanh | Hiring MCP Server (5 Tools), Function Support, Hiring Agent | HIR-01 → HIR-10 | `agents/hiring/`, `mcp_servers/hiring/` |
-| 7 | **Chuyên cần** | Lê Hữu Thanh Vy | Attendance MCP Server, Attendance Agent | ATT-01 | `agents/attendance/`, `mcp_servers/attendance/` |
-| 8 | **Nhân sự** | Hồ Tấn Dũng | Employee MCP Server, Employee Agent, bảo mật dữ liệu | EMP-01 | `agents/employee/`, `mcp_servers/employee/` |
-| 9 | **OCR** | Lê Hữu Thanh Vy | OCR Service xử lý hình ảnh văn bản/hồ sơ | OCR-01 | `services/ocr/` |
+| Phân hệ | Agent | MCP Server | Danh sách Công cụ (MCP Tools) |
+|---|---|---|---|
+| **Tuyển dụng** | `HiringAgent` | `mcp_servers.hiring` | `search_candidates`, `get_candidate_detail`, `list_job_openings`, `get_interview_schedule`, `get_recruitment_summary` |
+| **Chuyên cần** | `AttendanceAgent` | `mcp_servers.attendance` | `get_monthly_attendance`, `get_late_arrival_summary`, `get_attendance_history`, `get_absence_summary`, `get_attendance_statistics` |
+| **Nhân sự** | `EmployeeAgent` | `mcp_servers.employee` | `search_employees`, `get_employee_profile`, `get_department_list`, `get_employee_department`, `get_employee_summary` |
 
 ---
 
-## 4. Phân hệ Tuyển dụng (Hiring Subsystem - Đã hoàn thiện)
+## 4. Hướng dẫn cài đặt & Khởi chạy
 
-Phân hệ Tuyển dụng hiện đã triển khai đầy đủ cả 2 tầng:
-1. **Hiring MCP Server & 5 MCP Tools**:
-   - `search_candidates`: Tìm kiếm ứng viên theo từ khóa, kỹ năng, trạng thái, mã vị trí.
-   - `get_candidate_detail`: Xem hồ sơ chi tiết theo `candidate_id`.
-   - `list_job_openings`: Danh sách các vị trí đang mở tuyển dụng.
-   - `get_interview_schedule`: Tra cứu lịch phỏng vấn theo ứng viên hoặc khoảng thời gian.
-   - `get_recruitment_summary`: Thống kê tổng hợp số liệu tuyển dụng.
-2. **Hiring Agent**: Tích hợp cả LLM intent extraction và fallback rule-based matcher offline, hỗ trợ phản hồi ngôn ngữ tự nhiên tiếng Việt mượt mà.
-
----
-
-## 5. Quy tắc phối hợp & Quy ước Git dành cho thành viên
-
-Để tránh xung đột code (conflict) và đảm bảo tính nhất quán của hệ thống:
-
-### 5.1. Quy tắc Interface dùng chung (`shared/abstractions/`)
-- **TUYỆT ĐỐI KHÔNG tự ý chỉnh sửa** các file trong `shared/abstractions/` (`agent.py`, `memory.py`, `llm.py`, `cache.py`, `mcp_client.py`).
-- Mọi thay đổi về input/output/methods của interface chung **phải được thảo luận và thống nhất với cả nhóm** trước khi sửa.
-
-### 5.2. Chuẩn dữ liệu MCP Response (`docs/AI_Plan.pdf`, trang 16)
-Mọi MCP Tool của tất cả các phân hệ đều phải trả về định dạng chuẩn:
-```json
-{
-  "success": true,
-  "data": {},
-  "error": null,
-  "metadata": {
-    "source": "ten_phan_he"
-  }
-}
-```
-
-### 5.3. Quy trình đẩy code lên GitHub
-1. Clone repository về máy:
-   ```bash
-   git clone https://github.com/ahuhu789/ai-agent-platform.git
-   cd ai-agent-platform
-   ```
-2. Tạo branch mới cho tính năng của bạn:
-   ```bash
-   git checkout -b feature/<ten-thanh-vien>-<ten-task>
-   # Ví dụ: git checkout -b feature/tra-my-root-agent
-   # Ví dụ: git checkout -b feature/thanh-vy-attendance-mcp
-   ```
-3. Commit và push code lên branch của bạn:
-   ```bash
-   git add .
-   git commit -m "feat(module): mo ta ngan gon thay doi"
-   git push origin feature/<ten-branch>
-   ```
-4. Mở **Pull Request (PR)** trên GitHub để review trước khi merge vào branch `main`.
-
----
-
-## 6. Hướng dẫn cài đặt & Chạy thử nghiệm
-
-### 6.1. Cài đặt môi trường
-Yêu cầu Python 3.10+:
+### 4.1. Cài đặt môi trường
+Yêu cầu Python 3.10 trở lên:
 ```bash
+# Cài đặt thư viện phụ thuộc
 pip install -r requirements.txt
-```
 
-Sao chép cấu hình môi trường:
-```bash
+# Thiết lập file cấu hình môi trường
 cp .env.example .env
 ```
-*(Nếu muốn Agent dùng LLM để phân tích ngữ nghĩa, điền `OPENAI_API_KEY` vào `.env`. Nếu không có key, Agent vẫn hoạt động 100% nhờ bộ rule-based matcher offline).*
 
-### 6.2. Chạy Automated Unit Tests
-Toàn bộ test suite được thiết kế chạy offline, không phụ thuộc API bên ngoài:
-```bash
-pytest
+### 4.2. Cấu hình LLM Provider (trong file `.env`)
+Hệ thống hỗ trợ cả chế độ có API Key và không có API Key:
+```ini
+# Chế độ LLM thật (OpenAI / Groq)
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-4o-mini
+
+# Chế độ Mock LLM / Rule-based (không tốn phí API, chạy offline hoàn toàn)
+# LLM_PROVIDER=mock
 ```
-*Kết quả hiện tại: 14/14 tests pass (100%).*
+*(Nếu không có API Key, các Agent sẽ tự động chạy chế độ Rule-based matcher offline mà không làm gián đoạn hệ thống).*
 
-### 6.3. Chạy Demo Tuyển dụng nghiệm thu (7 kịch bản)
+### 4.3. Khởi chạy Chat API & Giao diện Web
 ```bash
-python demo.py
+uvicorn apps.chatbot.main:app --reload --port 8000
+```
+- **Web Demo UI**: Truy cập [http://localhost:8000](http://localhost:8000)
+- **Interactive Swagger Docs**: Truy cập [http://localhost:8000/docs](http://localhost:8000/docs)
+
+---
+
+## 5. Kiểm thử tự động (Automated Testing)
+
+Toàn bộ hệ thống được bảo vệ bởi **161 unit, integration và benchmark tests**, chạy độc lập và không phụ thuộc dịch vụ ngoài:
+
+```bash
+python -m pytest tests/ -v
 ```
 
-### 6.4. Chạy CLI Chat tương tác thử nghiệm
-```bash
-python chat.py
+Kết quả:
+```
+============================ 161 passed in ~18s =============================
 ```
 
-### 6.5. Khởi chạy độc lập MCP Server Tuyển dụng
-- Khởi chạy qua giao thức **stdio** (mặc định):
-  ```bash
-  python -m mcp_servers.hiring.server --transport stdio
-  ```
-- Khởi chạy qua giao thức **SSE** (HTTP Server tại port 8001):
-  ```bash
-  python -m mcp_servers.hiring.server --transport sse --host 0.0.0.0 --port 8001
-  ```
-- Kiểm thử trực quan với công cụ **MCP Inspector**:
-  ```bash
-  npx @modelcontextprotocol/inspector python -m mcp_servers.hiring.server
-  ```
+Các bộ test chính:
+- `tests/test_chatbot_api.py`: Kiểm thử API endpoint `/chat`, `/conversations`, CRUD, user isolation và bảo mật IDOR.
+- `tests/test_cache.py`: Kiểm thử `InMemoryCache` TTL và thread-safety.
+- `tests/test_root_agent.py`: Kiểm thử 15 kịch bản định tuyến phân hệ và câu hỏi biên.
+- `tests/test_hiring_mcp.py`, `test_attendance_mcp.py`, `test_employee_mcp.py`: Kiểm thử từng MCP Tool và schema validation.
+- `tests/test_agent_benchmark.py`: Benchmark hiệu năng và độ chính xác phân loại ý định.
+- `shared/llm/test_llm.py`: Kiểm thử LLMFactory, MockLLM và provider error handling.
+
+---
+
+## 6. Khởi chạy độc lập từng MCP Server
+
+Bạn có thể chạy độc lập từng MCP Server để kiểm thử với **MCP Inspector**:
+
+```bash
+# Hiring Server
+python -m mcp_servers.hiring.server --transport stdio
+
+# Attendance Server
+python -m mcp_servers.attendance.server --transport stdio
+
+# Employee Server
+python -m mcp_servers.employee.server --transport stdio
+```
+
+Kiểm thử giao diện trực quan với MCP Inspector:
+```bash
+npx @modelcontextprotocol/inspector python -m mcp_servers.hiring.server
+```

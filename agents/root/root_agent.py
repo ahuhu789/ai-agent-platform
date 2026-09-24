@@ -1,6 +1,6 @@
 import unicodedata
 
-from shared.abstractions.agent import AgentRequest, AgentResponse
+from shared.abstractions.agent import AgentRequest, AgentResponse, BaseAgent
 from agents.root.agent_registry import AgentRegistry
 
 
@@ -57,12 +57,14 @@ def classify_intent(message: str):
     return None
 
 
-class RootAgent:
+class RootAgent(BaseAgent):
     """Đầu mối điều phối: nhận câu hỏi, xác định phân hệ, gọi đúng Agent.
 
     Root Agent KHÔNG tự xử lý nghiệp vụ, KHÔNG gọi MCP trực tiếp - chỉ định
     tuyến (route) và trả nguyên kết quả từ Agent phân hệ về.
     """
+
+    name: str = "root"
 
     def __init__(self, registry: AgentRegistry):
         # Nhận registry từ bên ngoài truyền vào (dependency injection) thay vì

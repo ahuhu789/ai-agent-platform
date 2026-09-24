@@ -80,11 +80,11 @@ class MockAttendanceSupport(AttendanceFunctionSupport):
             return "ALL"
         # Check by name in records
         target_lower = employee_id_or_name.strip().lower()
-        if "a" in target_lower or "nguyễn văn a" in target_lower:
+        if target_lower in ("a", "nhân viên a", "nguyễn văn a", "nv a") or "nguyễn văn a" in target_lower:
             return "NV001"
-        if "b" in target_lower or "trần thị b" in target_lower:
+        if target_lower in ("b", "nhân viên b", "trần thị b", "nv b") or "trần thị b" in target_lower:
             return "NV002"
-        if "c" in target_lower or "lê hoàng c" in target_lower:
+        if target_lower in ("c", "nhân viên c", "lê hoàng c", "nv c") or "lê hoàng c" in target_lower:
             return "NV003"
         return target
 

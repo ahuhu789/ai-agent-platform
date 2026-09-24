@@ -105,3 +105,32 @@ def test_conversations_crud(client):
     # 5. Verify deleted
     not_found = client.get(f"/conversations/{conv_id}")
     assert not_found.status_code == 404
+
+
+def test_conversations_messages_and_user_isolation(client):
+    # Tạo conversation cho user_alice
+    res_a = client.post("/conversations", json={"title": "Alice Chat", "user_id": "user_alice"})
+    assert res_a.status_code == 200
+    conv_alice = res_a.json()["id"]
+
+    # Gửi tin nhắn
+    chat_res = client.post("/chat", json={
+        "conversation_id": conv_alice,
+        "message": "Có bao nhiêu ứng viên đang chờ phỏng vấn?",
+        "user_id": "user_alice"
+    })
+    assert chat_res.status_code == 200
+
+    # Lấy messages qua endpoint mới GET /conversations/{id}/messages
+    msg_res = client.get(f"/conversations/{conv_alice}/messages?user_id=user_alice")
+    assert msg_res.status_code == 200
+    messages = msg_res.json()
+    assert len(messages) >= 2
+
+    # Kiểm tra User Isolation (user_bob không thể truy cập conversation của user_alice)
+    bob_res = client.get(f"/conversations/{conv_alice}?user_id=user_bob")
+    assert bob_res.status_code == 404
+
+    bob_msg_res = client.get(f"/conversations/{conv_alice}/messages?user_id=user_bob")
+    assert bob_msg_res.status_code == 404
+

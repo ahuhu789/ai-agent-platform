@@ -73,24 +73,15 @@ def test_duplicate_registration_warns():
     print("[OK] Đăng ký trùng tên Agent không làm crash (chỉ cảnh báo)")
 
 
-def run_tests():
+import pytest
+
+
+@pytest.mark.parametrize("question,expected_intent", TEST_CASES)
+def test_root_agent_routing(question, expected_intent):
     root_agent = build_root_agent()
-    passed, failed = 0, 0
-
-    for question, expected_intent in TEST_CASES:
-        response = root_agent.handle(AgentRequest(message=question))
-        actual_intent = response.metadata.get("intent")
-
-        status = "OK" if actual_intent == expected_intent else "SAI"
-        if status == "OK":
-            passed += 1
-        else:
-            failed += 1
-
-        print(f"[{status}] '{question}'")
-        print(f"       kỳ vọng: {expected_intent} | thực tế: {actual_intent}")
-
-    print(f"\n--- Kết quả: {passed} đúng / {failed} sai / {len(TEST_CASES)} tổng ---")
+    response = root_agent.handle(AgentRequest(message=question))
+    actual_intent = response.metadata.get("intent")
+    assert actual_intent == expected_intent
 
 
 if __name__ == "__main__":

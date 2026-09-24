@@ -102,19 +102,18 @@ class OllamaLLM(LLM):
     def generate(self, request: LLMRequest) -> LLMResponse:
         try:
             from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-        except ImportError as exc:
-            raise LLMProviderError("Cần thư viện 'langchain-core'. Hãy chạy: pip install langchain-core") from exc
-
-        messages = []
-        for message in request.messages:
-            role = message.get("role", "user")
-            content = message.get("content", "")
-            if role == "system":
-                messages.append(SystemMessage(content=content))
-            elif role == "ai":
-                messages.append(AIMessage(content=content))
-            else:
-                messages.append(HumanMessage(content=content))
+            messages = []
+            for message in request.messages:
+                role = message.get("role", "user")
+                content = message.get("content", "")
+                if role == "system":
+                    messages.append(SystemMessage(content=content))
+                elif role == "ai":
+                    messages.append(AIMessage(content=content))
+                else:
+                    messages.append(HumanMessage(content=content))
+        except ImportError:
+            messages = request.messages
 
         options = {}
         if request.temperature is not None:
