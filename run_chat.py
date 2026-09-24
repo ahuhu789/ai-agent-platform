@@ -1,6 +1,6 @@
-from llm_factory import load_config, LLMFactory, LLMRequest
+from shared.llm import load_config, LLMFactory, LLMRequest
 
-config = load_config("llm_factory/config.yaml")
+config = load_config("shared/llm/config.yaml")
 llm = LLMFactory.create(config)
 
 while True:

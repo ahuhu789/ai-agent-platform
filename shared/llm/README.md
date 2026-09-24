@@ -13,7 +13,8 @@ LLM Factory cung cấp một interface chung để làm việc với nhiều LLM
 ```text
 my_chatbot/
 ├── run_chat.py                 # Chương trình chatbot dòng lệnh
-└── llm_factory/
+└── shared/
+	└── llm/
 	├── config.yaml             # Provider và model đang sử dụng
 	├── config.py               # Đọc và kiểm tra YAML
 	├── exceptions.py           # Các loại lỗi của factory
@@ -63,7 +64,7 @@ flowchart TD
 
 Chi tiết các bước:
 
-1. `run_chat.py` gọi `load_config("llm_factory/config.yaml")`.
+1. `run_chat.py` gọi `load_config("shared/llm/config.yaml")`.
 2. `config.py` đọc YAML, tạo `ProviderConfig` cho từng provider và kiểm tra cấu hình.
 3. `LLMFactory.create(config)` đọc `active_provider` và tạo đúng implementation của `LLM`.
 4. Câu hỏi được đóng gói thành `LLMRequest` với danh sách `messages`.
@@ -72,7 +73,7 @@ Chi tiết các bước:
 
 ## Cấu hình provider
 
-File `llm_factory/config.yaml` hiện có:
+File `shared/llm/config.yaml` hiện có:
 
 ```yaml
 active_provider: ollama
@@ -227,7 +228,7 @@ Nếu `temperature` hoặc `max_tokens` được đặt trong `LLMRequest`, giá
 Chạy toàn bộ test:
 
 ```powershell
-python -m pytest llm_factory/test_llm.py -q
+python -m pytest shared/llm/test_llm.py -q
 ```
 
 Các test hiện có kiểm tra:
