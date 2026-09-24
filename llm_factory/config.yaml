@@ -1,0 +1,13 @@
+active_provider: ollama
+providers:
+    mock:
+        model: mock-model
+        extra:
+            response: Mock response from factory.
+    ollama:
+        model: llama3.2
+        temperature: 0.7
+        timeout: 30
+        extra:
+            # Địa chỉ Ollama mặc định; thay đổi nếu server chạy nơi khác.
+            base_url: http://localhost:11434
