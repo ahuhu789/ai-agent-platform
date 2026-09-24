@@ -1,114 +1,95 @@
 """
-Cài đặt TẠM THỜI của BaseMemoryStore, chỉ để Chat API (/chat, /conversations)
-chạy độc lập trong lúc chờ `shared/memory/` (task MEM-01, phụ trách: Vũ Công
-Nguyên Khang) hoàn thiện.
-
-KHI shared/memory/InMemoryStore (hoặc RedisMemoryStore) đã sẵn sàng:
-    - Xóa file này (hoặc giữ lại làm fallback cho môi trường test).
-    - Trong agent_setup.py / main.py, đổi:
-          from apps.chatbot.memory_store import memory_store
-      thành:
-          from shared.memory import InMemoryStore  # hoặc RedisMemoryStore
-          memory_store = InMemoryStore()
-
-Lưu ý: BaseMemoryStore (shared/abstractions/memory.py) chỉ định nghĩa lưu
-message + context, KHÔNG có khái niệm "danh sách conversation". Vì vậy lớp
-này có thêm các method quản lý conversation (create/list/get_meta/delete)
-nằm NGOÀI interface chuẩn — cần cho GET /conversations của Chat API.
-Nếu bản memory chính thức không hỗ trợ các method này, giữ lại lớp này
-làm lớp quản lý conversation riêng, chỉ ủy quyền save_message/get_messages
-sang memory store chính thức.
+Adapter kết nối Chat API với module Memory chính thức (shared.memory.factory).
+Cung cấp các phương thức cần thiết cho /chat và /conversations,
+đồng thời ủy quyền lưu trữ cho MemoryStore (InMemoryStore hoặc RedisMemoryStore).
 """
 import uuid
 from datetime import datetime, timezone
-from threading import Lock
 from typing import Any, Dict, List, Optional
 
-from shared.abstractions.memory import BaseMemoryStore
+from shared.abstractions.memory import Message
+from shared.memory.factory import create_memory_store
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
+def _now_str() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-class InMemoryStore(BaseMemoryStore):
-    def __init__(self):
-        self._lock = Lock()
-        self._conversations: Dict[str, Dict[str, Any]] = {}       # conversation_id -> meta
-        self._messages: Dict[str, List[Dict[str, Any]]] = {}      # conversation_id -> [message]
-        self._user_context: Dict[str, Dict[str, Any]] = {}        # user_id -> {key: value}
-        self._agent_context: Dict[str, Dict[str, Any]] = {}       # f"{conv_id}:{agent}" -> {key: value}
+class ChatbotMemoryAdapter:
+    def __init__(self, provider: Optional[str] = None):
+        self._store = create_memory_store(provider)
+        self._titles: Dict[str, str] = {}  # conversation_id -> title
 
-    # ---------- Quản lý Conversation (bổ sung ngoài BaseMemoryStore) ----------
-    def create_conversation(self, title: Optional[str] = None) -> str:
-        conversation_id = str(uuid.uuid4())
-        now = _now()
-        with self._lock:
-            self._conversations[conversation_id] = {
-                "id": conversation_id,
-                "title": title or "Cuộc trò chuyện mới",
-                "created_at": now,
-                "updated_at": now,
-            }
-            self._messages[conversation_id] = []
-        return conversation_id
+    def create_conversation(self, title: Optional[str] = None, user_id: str = "default_user") -> str:
+        conv = self._store.create_conversation(user_id=user_id)
+        conv_id = conv.conversation_id
+        self._titles[conv_id] = title or "Cuộc trò chuyện mới"
+        return conv_id
 
-    def get_conversation_meta(self, conversation_id: str) -> Optional[Dict[str, Any]]:
-        return self._conversations.get(conversation_id)
+    def get_conversation_meta(self, conversation_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        conv = self._store.get_conversation(conversation_id, user_id=user_id)
+        if not conv:
+            return None
+        return {
+            "id": conv.conversation_id,
+            "title": self._titles.get(conv.conversation_id, "Cuộc trò chuyện mới"),
+            "created_at": conv.created_at,
+            "updated_at": conv.updated_at,
+        }
 
-    def list_conversations(self) -> List[Dict[str, Any]]:
-        return sorted(self._conversations.values(), key=lambda c: c["updated_at"], reverse=True)
+    def list_conversations(self, user_id: str = "default_user") -> List[Dict[str, Any]]:
+        conversations = self._store.list_conversations(user_id=user_id)
+        result = []
+        for c in conversations:
+            result.append({
+                "id": c.conversation_id,
+                "title": self._titles.get(c.conversation_id, "Cuộc trò chuyện mới"),
+                "created_at": c.created_at,
+                "updated_at": c.updated_at,
+            })
+        return result
 
-    def delete_conversation(self, conversation_id: str) -> bool:
-        with self._lock:
-            existed = conversation_id in self._conversations
-            self._conversations.pop(conversation_id, None)
-            self._messages.pop(conversation_id, None)
-            return existed
+    def delete_conversation(self, conversation_id: str, user_id: Optional[str] = None) -> bool:
+        self._titles.pop(conversation_id, None)
+        return self._store.delete_conversation(conversation_id, user_id=user_id)
 
-    # ---------- BaseMemoryStore (bắt buộc) ----------
     def save_message(
         self,
         conversation_id: str,
         role: str,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
-        with self._lock:
-            self._messages.setdefault(conversation_id, []).append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "role": role,
-                    "content": content,
-                    "metadata": metadata or {},
-                    "created_at": _now(),
-                }
-            )
-            if conversation_id in self._conversations:
-                self._conversations[conversation_id]["updated_at"] = _now()
+        msg = Message(role=role, content=content, metadata=metadata or {})
+        self._store.append_message(conversation_id, msg, user_id=user_id)
 
-    def get_messages(self, conversation_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        messages = self._messages.get(conversation_id, [])
-        return messages[-limit:] if limit else list(messages)
+    def get_messages(self, conversation_id: str, limit: Optional[int] = None, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        messages = self._store.get_messages(conversation_id, user_id=user_id)
+        if limit:
+            messages = messages[-limit:]
+        return [
+            {
+                "id": m.metadata.get("id") or str(uuid.uuid4()),
+                "role": m.role,
+                "content": m.content,
+                "created_at": m.created_at,
+            }
+            for m in messages
+        ]
 
     def set_user_context(self, user_id: str, key: str, value: Any) -> None:
-        with self._lock:
-            self._user_context.setdefault(user_id, {})[key] = value
+        self._store.update_user_context(user_id, {key: value})
 
     def get_user_context(self, user_id: str, key: str) -> Optional[Any]:
-        return self._user_context.get(user_id, {}).get(key)
+        return self._store.get_user_context(user_id).get(key)
 
-    def set_agent_context(self, conversation_id: str, agent_name: str, key: str, value: Any) -> None:
-        scope = f"{conversation_id}:{agent_name}"
-        with self._lock:
-            self._agent_context.setdefault(scope, {})[key] = value
+    def set_agent_context(self, user_id: str, agent_name: str, key: str, value: Any) -> None:
+        self._store.update_agent_context(user_id, agent_name, {key: value})
 
-    def get_agent_context(self, conversation_id: str, agent_name: str, key: str) -> Optional[Any]:
-        scope = f"{conversation_id}:{agent_name}"
-        return self._agent_context.get(scope, {}).get(key)
+    def get_agent_context(self, user_id: str, agent_name: str, key: str) -> Optional[Any]:
+        return self._store.get_agent_context(user_id, agent_name).get(key)
 
 
-# Singleton dùng chung trong toàn bộ Chat API (giữ state trong 1 process).
-# Khi đổi sang RedisMemoryStore, state sẽ ở Redis nên singleton kiểu này
-# không còn cần thiết (nhiều process/worker vẫn thấy chung 1 dữ liệu).
-memory_store = InMemoryStore()
+# Singleton dùng chung trong toàn bộ Chat API
+memory_store = ChatbotMemoryAdapter()

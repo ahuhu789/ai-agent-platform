@@ -126,3 +126,7 @@ class MemoryStore(ABC):
     @abstractmethod
     def update_agent_context(self, user_id: str, agent_name: str, data: dict) -> None:
         """Gộp ``data`` vào context riêng của Agent."""
+
+
+# Alias for backward compatibility
+BaseMemoryStore = MemoryStore
