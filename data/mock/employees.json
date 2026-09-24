@@ -1,0 +1,326 @@
+[
+  {
+    "employee_id": 1,
+    "first_name": "Tâm",
+    "last_name": "Ngô Hoàng",
+    "employee_code": "000001",
+    "name": "Ngô Hoàng Tâm",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 2,
+    "first_name": "Quân",
+    "last_name": "Võ Văn",
+    "employee_code": "1712698",
+    "name": "Võ Văn Quân",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 3,
+    "first_name": "Trâm",
+    "last_name": "Lê Bảo",
+    "employee_code": "07072025",
+    "name": "Lê Bảo Trâm",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 4,
+    "first_name": "Trâm",
+    "last_name": "Trịnh Võ Thùy",
+    "employee_code": "09072026",
+    "name": "Trịnh Võ Thùy Trâm",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 5,
+    "first_name": "Trắng",
+    "last_name": "Nguyễn Văn",
+    "employee_code": "09092025",
+    "name": "Nguyễn Văn Trắng",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 6,
+    "first_name": "Tâm",
+    "last_name": "Huỳnh Giang Khánh ",
+    "employee_code": "00015",
+    "name": "Huỳnh Giang Khánh Tâm",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 7,
+    "first_name": "Hùng",
+    "last_name": "Lê Đinh Thanh",
+    "employee_code": "000002",
+    "name": "Lê Đinh Thanh Hùng",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 8,
+    "first_name": "My",
+    "last_name": "Lê Thị Trà",
+    "employee_code": "001",
+    "name": "Lê Thị Trà My",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 9,
+    "first_name": "Hoài",
+    "last_name": "Đặng Nguyên",
+    "employee_code": "002",
+    "name": "Đặng Nguyên Hoài",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 10,
+    "first_name": "Thắng",
+    "last_name": "Nguyễn Hữu",
+    "employee_code": "003",
+    "name": "Nguyễn Hữu Thắng",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 11,
+    "first_name": "Khang",
+    "last_name": "Vũ Công Nguyên",
+    "employee_code": "004",
+    "name": "Vũ Công Nguyên Khang",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 12,
+    "first_name": "Đạt",
+    "last_name": "Lữ Đình Quốc",
+    "employee_code": "005",
+    "name": "Lữ Đình Quốc Đạt",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 13,
+    "first_name": "Thanh",
+    "last_name": "Nguyễn Huy",
+    "employee_code": "006",
+    "name": "Nguyễn Huy Thanh",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 14,
+    "first_name": "Anh",
+    "last_name": "Hoàng Minh",
+    "employee_code": "007",
+    "name": "Hoàng Minh Anh",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 15,
+    "first_name": "Dũng",
+    "last_name": "Hồ Tấn",
+    "employee_code": "008",
+    "name": "Hồ Tấn Dũng",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 16,
+    "first_name": "Vy",
+    "last_name": "Lê Hữu Thanh",
+    "employee_code": "009",
+    "name": "Lê Hữu Thanh Vy",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 17,
+    "first_name": "Thuận",
+    "last_name": "Đào Minh ",
+    "employee_code": "010",
+    "name": "Đào Minh Thuận",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 18,
+    "first_name": "Lâm",
+    "last_name": "Tô Khiết",
+    "employee_code": "011",
+    "name": "Tô Khiết Lâm",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 19,
+    "first_name": "Đạt",
+    "last_name": "Huỳnh Tấn",
+    "employee_code": "012",
+    "name": "Huỳnh Tấn Đạt",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 20,
+    "first_name": "Nhân",
+    "last_name": "Nguyễn Xuân",
+    "employee_code": "013",
+    "name": "Nguyễn Xuân Nhân",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 21,
+    "first_name": "Viên",
+    "last_name": "Trần Đặng Ngọc ",
+    "employee_code": "014",
+    "name": "Trần Đặng Ngọc Viên",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 22,
+    "first_name": "Nhi",
+    "last_name": "Võ Thị Yến",
+    "employee_code": "015",
+    "name": "Võ Thị Yến Nhi",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 23,
+    "first_name": "Trung ",
+    "last_name": "Huỳnh Tiến",
+    "employee_code": "016",
+    "name": "Huỳnh Tiến Trung",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 24,
+    "first_name": "Quyên",
+    "last_name": "Nguyễn Thị",
+    "employee_code": "017",
+    "name": "Nguyễn Thị Quyên",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 25,
+    "first_name": "Tài",
+    "last_name": "Tô Duy",
+    "employee_code": "018",
+    "name": "Tô Duy Tài",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 26,
+    "first_name": "Trường",
+    "last_name": "Trần Ngô Trọng",
+    "employee_code": "019",
+    "name": "Trần Ngô Trọng Trường",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 27,
+    "first_name": "Phước",
+    "last_name": "Huỳnh Ngọc",
+    "employee_code": "020",
+    "name": "Huỳnh Ngọc Phước",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 28,
+    "first_name": "Kiên",
+    "last_name": "Phạm Trung",
+    "employee_code": "021",
+    "name": "Phạm Trung Kiên",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 29,
+    "first_name": "Chiến",
+    "last_name": "Nguyễn Văn ",
+    "employee_code": "022",
+    "name": "Nguyễn Văn Chiến",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 30,
+    "first_name": "Linh",
+    "last_name": "Nguyễn Ngọc Yến",
+    "employee_code": "023",
+    "name": "Nguyễn Ngọc Yến Linh",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 1001,
+    "first_name": "Cha",
+    "last_name": "Kim Ri",
+    "employee_code": "1712690129",
+    "name": "Kim Ri Cha",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 1004,
+    "first_name": "Nhật Huy",
+    "last_name": "Lê ",
+    "employee_code": "025",
+    "name": "Lê Nhật Huy",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 1005,
+    "first_name": "Phương Thảo",
+    "last_name": "Phạm",
+    "employee_code": "027",
+    "name": "Phạm Phương Thảo",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 1006,
+    "first_name": "Thị Ý Vy",
+    "last_name": "Trần",
+    "employee_code": "028",
+    "name": "Trần Thị Ý Vy",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 1007,
+    "first_name": "Thị Duyên",
+    "last_name": "Nguyễn ",
+    "employee_code": "024",
+    "name": "Nguyễn Thị Duyên",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  },
+  {
+    "employee_id": 1008,
+    "first_name": "Trung Nguyên",
+    "last_name": "Đặng",
+    "employee_code": "026",
+    "name": "Đặng Trung Nguyên",
+    "position": "Nhân viên",
+    "department": "Công ty"
+  }
+]
