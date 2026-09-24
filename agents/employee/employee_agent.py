@@ -266,10 +266,21 @@ class EmployeeAgent(BaseAgent):
             }
 
         # 5. Search employees: "tìm nhân viên", "danh sách nhân viên"
-        if match_any(["tìm nhân viên", "tim nhan vien", "danh sách nhân viên", "danh sach nhan vien", "tra cứu nhân viên", "tra cuu nhan vien", "toàn bộ nhân sự", "toan bo nhan su", "danh sách nhân sự", "danh sach nhan su"]):
+        if match_any(["danh sách nhân viên", "danh sach nhan vien", "toàn bộ nhân sự", "toan bo nhan su", "danh sách nhân sự", "danh sach nhan su"]):
             return {
                 "tool": "search_employees",
                 "parameters": {"limit": 10},
+                "needs_more_info": False,
+            }
+
+        if match_any(["tìm nhân viên", "tim nhan vien", "tra cứu nhân viên", "tra cuu nhan vien"]):
+            extracted = re.sub(r"^(?:tìm\s+(?:kiếm\s+)?nhân\s+viên\s*(?:có\s+tên|tên\s+là|tên)?|tra\s+cứu\s+nhân\s+viên)\s*", "", message, flags=re.IGNORECASE).strip()
+            params = {"limit": 10}
+            if extracted and len(extracted) > 1 and not any(k in extracted.lower() for k in ["nào", "đang", "toàn bộ", "tất cả"]):
+                params["keyword"] = extracted
+            return {
+                "tool": "search_employees",
+                "parameters": params,
                 "needs_more_info": False,
             }
 
@@ -322,8 +333,21 @@ class EmployeeAgent(BaseAgent):
         tool_result: Dict[str, Any],
     ) -> str:
         """Call LLM or OpenAI client to format natural response."""
+        system_prompt = (
+            "Bạn là Trợ lý Nhân sự (Employee Agent) thông minh, chuyên nghiệp của hệ thống FME.\n"
+            "Nhiệm vụ: Dựa vào DỮ LIỆU THỰC TẾ từ Tool vừa gọi để trả lời người dùng một cách chính xác, tự nhiên bằng tiếng Việt.\n"
+            "QUY TẮC ĐỊNH DẠNG BẮT BUỘC:\n"
+            "- Với chi tiết 1 bản ghi (như xem hồ sơ 1 nhân viên, phòng ban của 1 nhân viên): Trình bày dạng chi tiết / card rõ ràng với các mục bullet points. BẮT BUỘC ghi rõ Mã nhân viên (ví dụ: `NV001`), Họ và tên, Phòng ban, Chức vụ, Liên hệ (Email, SĐT). KHÔNG ép thành bảng 1 dòng.\n"
+            "- Khi kết quả là danh sách từ 2 bản ghi trở lên (danh sách nhân viên, danh sách phòng ban...): BẮT BUỘC dùng bảng Markdown (Markdown Table) chuẩn. Cột đầu tiên là STT, tiếp đến Mã (Mã NV / Mã PB), rồi đến các cột thông tin.\n"
+            "- Bảng có tiêu đề ngắn gọn (dùng ###). Cột số liệu (STT, số lượng nhân sự) phải căn phải (|---:|), các cột khác căn trái (|---|).\n"
+            "- Sau bảng có MỘT dòng tổng kết ngắn gọn (ví dụ: **Tổng số:** X nhân viên / phòng ban.), KHÔNG lặp lại toàn bộ dữ liệu bên dưới.\n"
+            "- Tuyệt đối KHÔNG escape ký tự gạch đứng | thành \\| trong bảng.\n"
+            "- Tuyệt đối KHÔNG escape ký tự @ trong email thành \\@.\n"
+            "- Không tự thêm quá nhiều emoji hoặc định dạng rườm rà không cần thiết.\n"
+            "- Tuyệt đối không bịa đặt dữ liệu ngoài thông tin do Tool cung cấp."
+        )
         prompt = (
-            f"{EMPLOYEE_AGENT_SYSTEM_PROMPT}\n\n"
+            f"{system_prompt}\n\n"
             f"Câu hỏi của người dùng: {message}\n"
             f"Công cụ MCP đã gọi: {tool_name}\n"
             f"Tham số: {json.dumps(parameters, ensure_ascii=False)}\n"
@@ -371,18 +395,19 @@ class EmployeeAgent(BaseAgent):
             position = data.get("position", "")
             emp_id = data.get("employee_id", "")
             return (
-                f"🏢 **Thông tin phòng ban của nhân viên:**\n\n"
-                f"- **Họ và tên:** {emp_name} (`{emp_id}`)\n"
+                f"### Thông tin phòng ban của nhân viên\n\n"
+                f"- **Mã nhân viên:** `{emp_id}`\n"
+                f"- **Họ và tên:** **{emp_name}**\n"
                 f"- **Phòng ban:** **{dept_name}**\n"
-                f"- **Chức vụ:** {position}\n"
+                f"- **Chức vụ:** {position}"
             )
 
         if tool_name == "get_employee_profile":
             notes = f"\n- **Ghi chú:** {data.get('notes')}" if data.get("notes") else ""
             return (
-                f"👤 **Hồ sơ chi tiết nhân viên [{data.get('id')} - {data.get('name')}]:**\n\n"
+                f"### Hồ sơ chi tiết nhân viên: {data.get('name')} [{data.get('id')}]\n\n"
                 f"- **Mã nhân viên:** `{data.get('id')}`\n"
-                f"- **Họ và tên:** {data.get('name')}\n"
+                f"- **Họ và tên:** **{data.get('name')}**\n"
                 f"- **Phòng ban:** {data.get('department_name')}\n"
                 f"- **Chức vụ:** {data.get('position')}\n"
                 f"- **Email:** {data.get('email')}\n"
@@ -395,13 +420,18 @@ class EmployeeAgent(BaseAgent):
         if tool_name == "get_department_list":
             departments = data.get("departments", [])
             total = data.get("total_departments", len(departments))
-            lines = [f"🏢 **Danh sách các phòng ban trong công ty ({total} phòng ban):**\n"]
-            for d in departments:
+            if not departments:
+                return "Không tìm thấy thông tin phòng ban nào trong hệ thống."
+            lines = [
+                f"### Danh sách các phòng ban ({total} phòng ban)\n",
+                "| STT | Mã PB | Tên phòng ban | Trưởng phòng | Nhân sự | Mô tả |",
+                "|---:|---|---|---|---:|---|",
+            ]
+            for idx, d in enumerate(departments, 1):
                 lines.append(
-                    f"- **{d.get('name')}** (`{d.get('code')}`): "
-                    f"Trưởng phòng: *{d.get('manager_name')}* | Nhân sự: **{d.get('member_count')}** người\n"
-                    f"  *{d.get('description', '')}*"
+                    f"| {idx} | `{d.get('code')}` | {d.get('name')} | {d.get('manager_name')} | {d.get('member_count')} | {d.get('description', '')} |"
                 )
+            lines.append(f"\n**Tổng số:** {total} phòng ban.")
             return "\n".join(lines)
 
         if tool_name == "get_employee_summary":
@@ -409,7 +439,7 @@ class EmployeeAgent(BaseAgent):
             active = data.get("active_count", 0)
             by_dept = data.get("by_department", {})
             lines = [
-                f"📊 **Báo cáo thống kê nhân sự:**\n",
+                "### Báo cáo thống kê nhân sự\n",
                 f"- **Tổng số nhân viên:** **{total}** người",
                 f"- **Đang làm việc (active):** {active} người",
                 f"- **Nghỉ phép / Khác:** {total - active} người\n",
@@ -424,11 +454,17 @@ class EmployeeAgent(BaseAgent):
             total = data.get("total_found", len(employees))
             if not employees:
                 return "Không tìm thấy nhân viên nào phù hợp với điều kiện tìm kiếm."
-            lines = [f"📋 **Tìm thấy {total} nhân viên:**\n"]
-            for e in employees:
+            lines = [
+                f"### Danh sách nhân viên (Tìm thấy {total} nhân viên)\n",
+                "| STT | Mã NV | Họ và tên | Chức vụ | Phòng ban | Trạng thái |",
+                "|---:|---|---|---|---|---|",
+            ]
+            for idx, e in enumerate(employees, 1):
+                st = "Đang làm việc" if e.get("status") == "active" else e.get("status")
                 lines.append(
-                    f"- **{e.get('name')}** (`{e.get('id')}`): {e.get('position')} - {e.get('department_name')}"
+                    f"| {idx} | `{e.get('id')}` | {e.get('name')} | {e.get('position')} | {e.get('department_name')} | {st} |"
                 )
+            lines.append(f"\n**Tổng số:** {total} nhân viên.")
             return "\n".join(lines)
 
         return f"Dữ liệu nhân sự:\n```json\n{json.dumps(data, ensure_ascii=False, indent=2)}\n```"

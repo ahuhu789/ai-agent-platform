@@ -328,8 +328,21 @@ class AttendanceAgent(BaseAgent):
         tool_result: Dict[str, Any],
     ) -> str:
         """Call LLM or OpenAI client to format natural response."""
+        system_prompt = (
+            "Bạn là Trợ lý Chuyên cần (Attendance Agent) thông minh, chuyên nghiệp của hệ thống FME.\n"
+            "Nhiệm vụ: Dựa vào DỮ LIỆU THỰC TẾ từ Tool vừa gọi để trả lời người dùng một cách chính xác, tự nhiên bằng tiếng Việt.\n"
+            "QUY TẮC ĐỊNH DẠNG BẮT BUỘC:\n"
+            "- Với chi tiết 1 cá nhân (như số ngày đi làm, thống kê đi trễ cá nhân): Trình bày dạng chi tiết / card rõ ràng với các mục bullet points. BẮT BUỘC ghi rõ Mã nhân viên (ví dụ: `NV001`), Họ và tên, Số ngày làm việc hoặc số lần trễ. KHÔNG ép thành bảng 1 dòng.\n"
+            "- Khi kết quả là danh sách từ 2 bản ghi trở lên (lịch sử chuyên cần nhiều ngày, bảng xếp hạng đi trễ/vắng mặt nhiều nhân viên...): BẮT BUỘC dùng bảng Markdown (Markdown Table) chuẩn. Cột đầu tiên là STT, tiếp đến Mã NV / Ngày, rồi đến các thông tin.\n"
+            "- Bảng có tiêu đề ngắn gọn (dùng ###). Cột số liệu (STT, số lần trễ, số phút, ngày nghỉ) phải căn phải (|---:|), các cột khác căn trái (|---|).\n"
+            "- Sau bảng có MỘT dòng tổng kết ngắn gọn (ví dụ: **Tổng số:** X bản ghi.), KHÔNG lặp lại toàn bộ dữ liệu bên dưới.\n"
+            "- Tuyệt đối KHÔNG escape ký tự gạch đứng | thành \\| trong bảng.\n"
+            "- Tuyệt đối KHÔNG escape ký tự @ trong email thành \\@.\n"
+            "- Không tự thêm quá nhiều emoji hoặc định dạng rườm rà không cần thiết.\n"
+            "- Tuyệt đối không bịa đặt dữ liệu ngoài thông tin do Tool cung cấp."
+        )
         prompt = (
-            f"{ATTENDANCE_AGENT_SYSTEM_PROMPT}\n\n"
+            f"{system_prompt}\n\n"
             f"Câu hỏi của người dùng: {message}\n"
             f"Công cụ MCP đã gọi: {tool_name}\n"
             f"Tham số: {json.dumps(parameters, ensure_ascii=False)}\n"
@@ -383,7 +396,7 @@ class AttendanceAgent(BaseAgent):
             rate = data.get("attendance_rate", 100.0)
 
             return (
-                f"📅 **Thông tin chuyên cần tháng {month}/{year}:**\n\n"
+                f"### Thông tin chuyên cần tháng {month}/{year}\n\n"
                 f"- **Nhân viên:** **{emp_name}** (`{emp_id}`)\n"
                 f"- **Số ngày đi làm thực tế:** **{days_worked}** / {total_days} ngày\n"
                 f"- **Số lần đi trễ:** {late} lần\n"
@@ -421,24 +434,25 @@ class AttendanceAgent(BaseAgent):
                 top_late_names = [f"**{info['name']}** (`{eid}` - {info['count']} lần)" for eid, info in sorted_emps if info["count"] == max_count]
 
                 lines = [
-                    f"⏰ **Thống kê nhân viên đi trễ tháng {month}/{year}:**\n",
+                    f"### Thống kê nhân viên đi trễ tháng {month}/{year}\n",
                     f"- **Nhân viên đi trễ nhiều nhất:** {', '.join(top_late_names)}",
                     f"- **Tổng số lượt đi trễ toàn công ty:** **{late_count} lượt** (Tổng cộng: {total_mins} phút)\n",
-                    "**Bảng xếp hạng đi trễ chi tiết:**",
-                    "| Nhân viên | Mã NV | Số lần trễ | Tổng phút trễ | Chi tiết ngày trễ |",
-                    "| :--- | :--- | :--- | :--- | :--- |",
+                    "**Bảng xếp hạng đi trễ chi tiết:**\n",
+                    "| STT | Mã NV | Họ và tên | Số lần trễ | Tổng phút trễ | Chi tiết ngày trễ |",
+                    "|---:|---|---|---:|---:|---|",
                 ]
-                for eid, info in sorted_emps:
+                for idx, (eid, info) in enumerate(sorted_emps, 1):
                     date_str = ", ".join(info["dates"])
-                    lines.append(f"| **{info['name']}** | `{eid}` | **{info['count']}** lần | {info['minutes']} phút | {date_str} |")
+                    lines.append(f"| {idx} | `{eid}` | **{info['name']}** | {info['count']} lần | {info['minutes']} phút | {date_str} |")
 
+                lines.append(f"\n**Tổng số:** {len(sorted_emps)} nhân viên đi trễ.")
                 return "\n".join(lines)
 
             # Trường hợp cá nhân 1 nhân viên
             lines = [
-                f"⏰ **Thống kê đi trễ tháng {month}/{year}:**\n",
-                f"- **Nhân viên:** **{emp_name}** (`{emp_id}`)",
-                f"- **Số lần đi trễ:** **{late_count} lần**",
+                f"### Thống kê đi trễ tháng {month}/{year}\n\n"
+                f"- **Nhân viên:** **{emp_name}** (`{emp_id}`)\n"
+                f"- **Số lần đi trễ:** **{late_count} lần**\n"
                 f"- **Tổng thời gian trễ:** {total_mins} phút\n",
             ]
             if details:
@@ -458,15 +472,16 @@ class AttendanceAgent(BaseAgent):
                 return f"Không có lịch sử chấm công cho nhân viên `{emp_id}` trong khoảng thời gian đã chọn."
 
             lines = [
-                f"📋 **Lịch sử chuyên cần nhân viên `{emp_id}` ({total} bản ghi):**\n",
-                "| Ngày | Giờ vào | Giờ ra | Trạng thái | Ghi chú |",
-                "| :--- | :--- | :--- | :--- | :--- |",
+                f"### Lịch sử chuyên cần nhân viên `{emp_id}` ({total} bản ghi)\n",
+                "| STT | Ngày | Giờ vào | Giờ ra | Trạng thái | Ghi chú |",
+                "|---:|---|---|---|---|---|",
             ]
-            for r in records:
-                status_icon = "✅ Đúng giờ" if r.get("status") == "on_time" else ("⏰ Trễ" if r.get("status") == "late" else "❌ Vắng")
+            for idx, r in enumerate(records, 1):
+                status_icon = "Đúng giờ" if r.get("status") == "on_time" else ("Trễ" if r.get("status") == "late" else "Vắng")
                 c_in = r.get("check_in") or "-"
                 c_out = r.get("check_out") or "-"
-                lines.append(f"| {r.get('date')} | {c_in} | {c_out} | {status_icon} | {r.get('notes') or ''} |")
+                lines.append(f"| {idx} | {r.get('date')} | {c_in} | {c_out} | {status_icon} | {r.get('notes') or ''} |")
+            lines.append(f"\n**Tổng số:** {total} bản ghi.")
             return "\n".join(lines)
 
         if tool_name == "get_absence_summary":
@@ -497,21 +512,24 @@ class AttendanceAgent(BaseAgent):
                 top_absent_names = [f"**{info['name']}** (`{eid}` - {info['count']} ngày)" for eid, info in sorted_absent if info["count"] == max_absent]
 
                 lines = [
-                    f"🏖️ **Báo cáo nhân viên vắng mặt / nghỉ phép tháng {month}/{year}:**\n",
+                    f"### Báo cáo nhân viên vắng mặt / nghỉ phép tháng {month}/{year}\n",
                     f"- **Nhân viên vắng mặt nhiều nhất:** {', '.join(top_absent_names)}",
                     f"- **Tổng số ngày nghỉ toàn công ty:** **{absent_days} ngày**\n",
-                    "**Danh sách chi tiết:**",
+                    "**Danh sách chi tiết:**\n",
+                    "| STT | Mã NV | Họ và tên | Số ngày nghỉ | Chi tiết ngày nghỉ |",
+                    "|---:|---|---|---:|---|",
                 ]
-                for eid, info in sorted_absent:
+                for idx, (eid, info) in enumerate(sorted_absent, 1):
                     reasons_str = "; ".join(info["reasons"])
-                    lines.append(f"- **{info['name']}** (`{eid}`): **{info['count']} ngày** ({reasons_str})")
+                    lines.append(f"| {idx} | `{eid}` | **{info['name']}** | {info['count']} ngày | {reasons_str} |")
 
+                lines.append(f"\n**Tổng số:** {len(sorted_absent)} nhân viên có ngày nghỉ.")
                 return "\n".join(lines)
 
             # Trường hợp cá nhân 1 nhân viên
             lines = [
-                f"🏖️ **Báo cáo vắng mặt & nghỉ phép:**\n",
-                f"- **Nhân viên:** **{emp_name}** (`{emp_id}`)",
+                f"### Báo cáo vắng mặt & nghỉ phép\n\n"
+                f"- **Nhân viên:** **{emp_name}** (`{emp_id}`)\n"
                 f"- **Số ngày nghỉ phép:** **{absent_days} ngày** (Có phép: {leave_perm} ngày)",
             ]
             if details:

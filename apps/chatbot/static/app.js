@@ -12,32 +12,127 @@ const openSettingsBtn = document.getElementById("openSettingsBtn");
 const closeSettingsBtn = document.getElementById("closeSettingsBtn");
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
 
-// Markdown parser helper
+// Clean unnecessary backslash escapes from LLMs (\| -> |, \@ -> @, \* -> *, etc.)
+function cleanMarkdownEscapes(text) {
+  if (!text) return "";
+  // 1. Unescape pipe: \| -> |
+  let cleaned = text.replace(/\\\|/g, "|");
+  // 2. Unescape at sign in emails: \@ -> @
+  cleaned = cleaned.replace(/\\@/g, "@");
+  // 3. Unescape markdown syntax if escaped: \* -> *, \_ -> _, \# -> #
+  cleaned = cleaned.replace(/\\([\*_`~#\-+!])/g, "$1");
+  return cleaned;
+}
+
+// Markdown parser helper with Marked.js + DOMPurify and robust fallback
 function renderMarkdown(text) {
   if (!text) return "";
-  let html = text
+
+  // 1. Clean backslash escapes
+  const cleaned = cleanMarkdownEscapes(text.trim());
+
+  // 2. If marked is available, use it for standard GFM (GitHub Flavored Markdown)
+  if (window.marked && typeof window.marked.parse === "function") {
+    try {
+      let rawHtml = window.marked.parse(cleaned, {
+        gfm: true,
+        breaks: true,
+      });
+
+      // Wrap tables inside responsive container for horizontal scroll on mobile/narrow screens
+      rawHtml = rawHtml.replace(/<table(\s*[^>]*)>/gi, '<div class="table-responsive"><table class="data-table"$1>');
+      rawHtml = rawHtml.replace(/<\/table>/gi, '</table></div>');
+
+      // Sanitize with DOMPurify if available for 100% XSS security
+      if (window.DOMPurify && typeof window.DOMPurify.sanitize === "function") {
+        return window.DOMPurify.sanitize(rawHtml, {
+          ADD_ATTR: ['target', 'align'],
+        });
+      }
+      return rawHtml;
+    } catch (e) {
+      console.warn("Lỗi khi parse bằng marked, chuyển sang fallback parser:", e);
+    }
+  }
+
+  // 3. Robust Fallback parser (handles tables, bold, italics, code, lists, headers)
+  return fallbackRenderMarkdown(cleaned);
+}
+
+// Fallback lightweight parser when external libraries are not present
+function fallbackRenderMarkdown(text) {
+  const lines = text.split("\n");
+  let inTable = false;
+  let tableHeader = "";
+  let tableRows = [];
+  let out = [];
+
+  function flushTable() {
+    if (tableRows.length > 0 || tableHeader) {
+      let tblHtml = '<div class="table-responsive"><table class="data-table">';
+      if (tableHeader) tblHtml += `<thead>${tableHeader}</thead>`;
+      if (tableRows.length > 0) tblHtml += `<tbody>${tableRows.join("")}</tbody>`;
+      tblHtml += '</table></div>';
+      out.push(tblHtml);
+      tableHeader = "";
+      tableRows = [];
+    }
+    inTable = false;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i].trim();
+
+    // Table line
+    if (line.startsWith("|") && line.endsWith("|")) {
+      const cells = line.slice(1, -1).split("|").map(c => c.trim());
+      // Check if separator line (|---|---|)
+      if (cells.every(c => /^:?-+:?$/.test(c))) {
+        continue;
+      }
+      if (!inTable) {
+        inTable = true;
+        tableHeader = `<tr>${cells.map(c => `<th>${inlineFormat(c)}</th>`).join("")}</tr>`;
+      } else {
+        tableRows.push(`<tr>${cells.map(c => `<td>${inlineFormat(c)}</td>`).join("")}</tr>`);
+      }
+      continue;
+    } else if (inTable) {
+      flushTable();
+    }
+
+    // Headers
+    if (/^###\s+(.*)$/.test(line)) {
+      out.push(`<h3>${inlineFormat(line.replace(/^###\s+/, ""))}</h3>`);
+    } else if (/^##\s+(.*)$/.test(line)) {
+      out.push(`<h2>${inlineFormat(line.replace(/^##\s+/, ""))}</h2>`);
+    } else if (/^#\s+(.*)$/.test(line)) {
+      out.push(`<h1>${inlineFormat(line.replace(/^#\s+/, ""))}</h1>`);
+    } else if (/^[•\-\*]\s+(.*)$/.test(line)) {
+      out.push(`<li>${inlineFormat(line.replace(/^[•\-\*]\s+/, ""))}</li>`);
+    } else if (line.length > 0) {
+      out.push(`<p>${inlineFormat(line)}</p>`);
+    }
+  }
+
+  if (inTable) {
+    flushTable();
+  }
+
+  let result = out.join("");
+  result = result.replace(/(<li>.*?<\/li>)+/gs, "<ul>$&</ul>");
+  return result;
+}
+
+function inlineFormat(text) {
+  let s = text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-
-  // Bold & Italics
-  html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/\*(.*?)\*/g, "<em>$1</em>");
-  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-
-  // Bullet points
-  html = html.replace(/^[•\-\*]\s+(.*)$/gm, "<li>$1</li>");
-  html = html.replace(/(<li>.*<\/li>)/s, "<ul>$1</ul>");
-
-  // Line breaks to paragraphs
-  const paragraphs = html.split("\n\n");
-  return paragraphs
-    .map((p) => {
-      p = p.trim();
-      if (p.startsWith("<ul>") || p.startsWith("<li>")) return p;
-      return `<p>${p.replace(/\n/g, "<br/>")}</p>`;
-    })
-    .join("");
+  s = s.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/\*(.*?)\*/g, "<em>$1</em>");
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  return s;
 }
 
 // Format date

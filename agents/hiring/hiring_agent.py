@@ -190,7 +190,7 @@ class HiringAgent(BaseAgent):
             return any(k in msg or k in msg_no_dia for k in keywords)
 
         # 1. Candidate detail query: "thông tin ứng viên ...", "mã UV001", "hồ sơ ứng viên"
-        uv_match = re.search(r"\b(uv\d{3,4})\b", msg, re.IGNORECASE)
+        uv_match = re.search(r"\b(uv\d{3,5})\b", msg, re.IGNORECASE)
         candidate_id = None
         if uv_match:
             candidate_id = uv_match.group(1).upper()
@@ -252,12 +252,17 @@ class HiringAgent(BaseAgent):
             return {"tool": "get_recruitment_summary", "parameters": {}}
 
         # 6. General candidate search: "tìm ứng viên", "danh sách ứng viên", "ứng viên backend", etc.
-        if match_any(["tìm ứng viên", "ứng viên", "danh sách ứng viên"]):
+        if match_any(["tìm ứng viên", "tìm kiếm ứng viên", "ứng viên", "danh sách ứng viên"]):
             kw = None
-            for title in ["backend", "ai", "machine learning", "dữ liệu", "data", "nhân sự", "devops", "sre"]:
+            for title in ["backend", "ai", "machine learning", "dữ liệu", "data", "nhân sự", "devops", "sre", "react", "python", "java"]:
                 if title in msg or title in msg_no_dia:
                     kw = title
                     break
+            if not kw:
+                extracted = re.sub(r"^(?:tìm\s+(?:kiếm\s+)?ứng\s+viên\s*(?:có\s+kỹ\s+năng|kỹ\s+năng)?|ứng\s+viên\s*(?:có\s+kỹ\s+năng|kỹ\s+năng)?|danh\s+sách\s+ứng\s+viên)\s*", "", message, flags=re.IGNORECASE).strip()
+                if extracted and len(extracted) > 1 and not any(k in extracted.lower() for k in ["nào", "đang", "toàn bộ", "tất cả"]):
+                    kw = extracted
+
             params = {}
             if kw:
                 params["keyword"] = kw
@@ -286,12 +291,17 @@ class HiringAgent(BaseAgent):
 
         # 1. Natural LLM Synthesis: if LLM client is available, format answer exactly as requested
         system_prompt = (
-            "Bạn là Trợ lý Tuyển dụng (Hiring Agent) thông minh, thân thiện của hệ thống FME.\n"
+            "Bạn là Trợ lý Tuyển dụng (Hiring Agent) thông minh, chuyên nghiệp của hệ thống FME.\n"
             "Nhiệm vụ: Dựa vào DỮ LIỆU THỰC TẾ từ Tool vừa gọi để trả lời người dùng một cách chính xác, tự nhiên bằng tiếng Việt.\n"
-            "QUY TẮC BẮT BUỘC:\n"
-            "- Tuân thủ chính xác yêu cầu của người dùng (ví dụ: nếu yêu cầu 'chỉ lấy tên' thì chỉ xuất danh sách tên, nếu hỏi 'có mấy người' thì trả lời số lượng).\n"
-            "- Không bịa đặt thông tin ngoài dữ liệu được cung cấp.\n"
-            "- Định dạng câu trả lời rõ ràng, dễ đọc (dùng gạch đầu dòng Markdown nếu liệt kê)."
+            "QUY TẮC ĐỊNH DẠNG BẮT BUỘC:\n"
+            "- Với chi tiết 1 bản ghi (như xem hồ sơ 1 ứng viên, 1 vị trí): Trình bày dạng chi tiết / card rõ ràng với các mục bullet points. BẮT BUỘC ghi rõ Mã định danh (ví dụ: `UV001`), Họ và tên, Vị trí ứng tuyển, Trạng thái, Kinh nghiệm, Kỹ năng, Liên hệ (Email, SĐT), Ghi chú. KHÔNG ép thành bảng 1 dòng.\n"
+            "- Khi kết quả là danh sách từ 2 bản ghi trở lên (danh sách ứng viên, vị trí tuyển dụng, lịch phỏng vấn...): BẮT BUỘC dùng bảng Markdown (Markdown Table) chuẩn. Cột đầu tiên là STT, tiếp đến Mã (Mã UV / Mã vị trí), rồi đến các cột thông tin.\n"
+            "- Bảng có tiêu đề ngắn gọn (dùng ###). Cột số liệu (STT, năm kinh nghiệm, chỉ tiêu) phải căn phải (|---:|), các cột khác căn trái (|---|).\n"
+            "- Sau bảng có MỘT dòng tổng kết ngắn gọn (ví dụ: **Tổng số:** X ứng viên.), KHÔNG lặp lại toàn bộ dữ liệu bên dưới.\n"
+            "- Tuyệt đối KHÔNG escape ký tự gạch đứng | thành \\| trong bảng.\n"
+            "- Tuyệt đối KHÔNG escape ký tự @ trong email thành \\@.\n"
+            "- Không tự thêm quá nhiều emoji hoặc định dạng rườm rà không cần thiết.\n"
+            "- Tuyệt đối không bịa đặt dữ liệu ngoài thông tin do Tool cung cấp."
         )
         user_prompt = (
             f"Câu hỏi của người dùng: {user_message}\n\n"
@@ -339,24 +349,30 @@ class HiringAgent(BaseAgent):
 
             status_filter = params.get("status")
             status_desc = f" có trạng thái '{status_filter}'" if status_filter else ""
-            lines = [f"📋 **Tìm thấy {total} ứng viên{status_desc}:**\n"]
-            for c in candidates:
-                status_vn = {
-                    "pending_interview": "Chờ phỏng vấn",
-                    "interviewing": "Đang phỏng vấn",
-                    "screening": "Đang duyệt hồ sơ",
-                    "offered": "Đã gửi thư mời",
-                    "rejected": "Đã từ chối",
-                    "hired": "Đã nhận việc",
-                    "applied": "Mới nộp",
-                }.get(c.get("status"), c.get("status"))
 
+            status_map = {
+                "pending_interview": "Chờ phỏng vấn",
+                "interviewing": "Đang phỏng vấn",
+                "screening": "Đang duyệt hồ sơ",
+                "offered": "Đã gửi thư mời",
+                "rejected": "Đã từ chối",
+                "hired": "Đã nhận việc",
+                "applied": "Mới nộp",
+            }
+
+            lines = [
+                f"### Danh sách ứng viên (Tìm thấy {total} ứng viên{status_desc})\n",
+                "| STT | Mã CV | Họ và tên | Vị trí | Kinh nghiệm | Trạng thái | Ngày nộp |",
+                "|---:|---|---|---|---:|---|---|",
+            ]
+            for idx, c in enumerate(candidates, 1):
+                st_vn = status_map.get(c.get("status"), c.get("status"))
+                exp = f"{c.get('experience_years', 0)} năm"
                 lines.append(
-                    f"• **[{c['id']}] {c['name']}** - {c['position']}\n"
-                    f"  - Email: {c['email']} | SĐT: {c['phone']}\n"
-                    f"  - Kinh nghiệm: {c['experience_years']} năm | Trạng thái: {status_vn}\n"
-                    f"  - Kỹ năng: {', '.join(c.get('skills', []))}"
+                    f"| {idx} | {c.get('id')} | {c.get('name')} | {c.get('position')} | {exp} | {st_vn} | {c.get('applied_date', '-')} |"
                 )
+
+            lines.append(f"\n**Tổng số:** {total} ứng viên.")
             return "\n".join(lines)
 
         # 2. get_candidate_detail synthesis
@@ -373,14 +389,16 @@ class HiringAgent(BaseAgent):
             }.get(c.get("status"), c.get("status"))
 
             return (
-                f"👤 **Hồ sơ chi tiết ứng viên: {c.get('name')} [{c.get('id')}]**\n\n"
-                f"• **Vị trí ứng tuyển:** {c.get('position')} (Mã vị trí: {c.get('job_id')})\n"
-                f"• **Trạng thái hiện tại:** {status_vn}\n"
-                f"• **Kinh nghiệm:** {c.get('experience_years')} năm\n"
-                f"• **Kỹ năng chính:** {', '.join(c.get('skills', []))}\n"
-                f"• **Liên hệ:** Email: {c.get('email')} | SĐT: {c.get('phone')}\n"
-                f"• **Ngày nộp hồ sơ:** {c.get('applied_date')}\n"
-                f"• **Ghi chú tuyển dụng:** {c.get('notes', 'Không có')}"
+                f"### Hồ sơ chi tiết ứng viên: {c.get('name')} [{c.get('id')}]\n\n"
+                f"- **Mã ứng viên:** `{c.get('id')}`\n"
+                f"- **Họ và tên:** **{c.get('name')}**\n"
+                f"- **Vị trí ứng tuyển:** {c.get('position')} (Mã vị trí: `{c.get('job_id')}`)\n"
+                f"- **Trạng thái hiện tại:** {status_vn}\n"
+                f"- **Kinh nghiệm:** {c.get('experience_years')} năm\n"
+                f"- **Kỹ năng chính:** {', '.join(c.get('skills', []))}\n"
+                f"- **Liên hệ:** Email: {c.get('email')} | SĐT: {c.get('phone')}\n"
+                f"- **Ngày nộp hồ sơ:** {c.get('applied_date')}\n"
+                f"- **Ghi chú:** {c.get('notes', 'Không có')}"
             )
 
         # 3. list_job_openings synthesis
@@ -390,14 +408,17 @@ class HiringAgent(BaseAgent):
             if not jobs:
                 return "Hiện tại không có vị trí tuyển dụng nào phù hợp với yêu cầu."
 
-            lines = [f"🏥 **Danh sách các vị trí đang tuyển dụng ({total} vị trí):**\n"]
-            for j in jobs:
+            lines = [
+                f"### Danh sách các vị trí đang tuyển dụng ({total} vị trí)\n",
+                "| STT | Mã vị trí | Tiêu đề công việc | Phòng ban | Chỉ tiêu | Mức lương |",
+                "|---:|---|---|---|---:|---|",
+            ]
+            for idx, j in enumerate(jobs, 1):
                 lines.append(
-                    f"• **[{j['id']}] {j['title']}** ({j['department']})\n"
-                    f"  - Số lượng cần tuyển: **{j['open_positions']} chỉ tiêu**\n"
-                    f"  - Mức lương: {j['salary_range']}\n"
-                    f"  - Yêu cầu: {'; '.join(j.get('requirements', []))}"
+                    f"| {idx} | `{j.get('id')}` | {j.get('title')} | {j.get('department')} | {j.get('open_positions')} | {j.get('salary_range')} |"
                 )
+
+            lines.append(f"\n**Tổng số:** {total} vị trí đang tuyển dụng.")
             return "\n".join(lines)
 
         # 4. get_interview_schedule synthesis
@@ -407,33 +428,39 @@ class HiringAgent(BaseAgent):
             if not schedules:
                 return "Hiện tại không có lịch phỏng vấn nào được lên lịch trong khoảng thời gian này."
 
-            lines = [f"📅 **Lịch phỏng vấn ({total} buổi phỏng vấn):**\n"]
-            for s in schedules:
+            lines = [
+                f"### Lịch phỏng vấn ({total} buổi phỏng vấn)\n",
+                "| STT | Mã UV | Ứng viên | Vị trí | Thời gian | Vòng | Người phỏng vấn | Trạng thái |",
+                "|---:|---|---|---|---|---:|---|---|",
+            ]
+            for idx, s in enumerate(schedules, 1):
+                time_str = f"{s.get('interview_time')} ngày {s.get('interview_date')}"
                 lines.append(
-                    f"• **Ứng viên: {s['candidate_name']} [{s['candidate_id']}]** - Vị trí: {s['job_title']}\n"
-                    f"  - Thời gian: **{s['interview_time']} ngày {s['interview_date']}** (Vòng {s['round']})\n"
-                    f"  - Người phỏng vấn: {s['interviewer']}\n"
-                    f"  - Trạng thái: {s['status']}"
+                    f"| {idx} | `{s.get('candidate_id')}` | **{s.get('candidate_name')}** | {s.get('job_title')} | {time_str} | {s.get('round')} | {s.get('interviewer')} | {s.get('status')} |"
                 )
+
+            lines.append(f"\n**Tổng số:** {total} buổi phỏng vấn.")
             return "\n".join(lines)
 
         # 5. get_recruitment_summary synthesis
         elif tool_name == "get_recruitment_summary":
             s = data
             lines = [
-                "📊 **Tổng hợp tình hình Tuyển dụng:**\n",
-                f"• **Tổng số chỉ tiêu đang mở:** {s.get('total_openings')} vị trí",
-                f"• **Tổng số ứng viên trong hệ thống:** {s.get('total_candidates')} ứng viên",
-                f"• **Ứng viên chờ phỏng vấn:** {s.get('pending_interview_count')} ứng viên",
-                f"• **Ứng viên đang phỏng vấn:** {s.get('interviewing_count')} ứng viên",
-                f"• **Ứng viên đã gửi thư mời (Offered):** {s.get('offered_count')} ứng viên",
-                f"• **Ứng viên đã từ chối:** {s.get('rejected_count')} ứng viên",
-                "\n**Chỉ tiêu tuyển dụng theo phòng ban:**",
+                "### Tổng hợp tình hình Tuyển dụng\n",
+                f"- **Tổng số chỉ tiêu đang mở:** **{s.get('total_openings')}** vị trí",
+                f"- **Tổng số ứng viên trong hệ thống:** **{s.get('total_candidates')}** ứng viên",
+                f"- **Ứng viên chờ phỏng vấn:** {s.get('pending_interview_count')} ứng viên",
+                f"- **Ứng viên đang phỏng vấn:** {s.get('interviewing_count')} ứng viên",
+                f"- **Ứng viên đã gửi thư mời (Offered):** {s.get('offered_count')} ứng viên",
+                f"- **Ứng viên đã từ chối:** {s.get('rejected_count')} ứng viên\n",
+                "**Chỉ tiêu tuyển dụng theo phòng ban:**",
             ]
             for dept, count in s.get("by_department", {}).items():
-                lines.append(f"  - {dept}: {count} chỉ tiêu")
+                lines.append(f"- **{dept}:** {count} chỉ tiêu")
 
             return "\n".join(lines)
+
+        return json.dumps(data, ensure_ascii=False, indent=2)
 
         return json.dumps(data, ensure_ascii=False, indent=2)
 
@@ -452,3 +479,7 @@ class HiringAgent(BaseAgent):
             data={"response": help_text},
             metadata={"source": "hiring", "agent": self.name, "tool_used": None},
         )
+
+    def _handle_general_query(self, message: str) -> AgentResponse:
+        """Alias for general query compatibility across all domain agents."""
+        return self._handle_general_recruitment_query(message)
