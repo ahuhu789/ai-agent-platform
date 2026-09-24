@@ -5,8 +5,11 @@ Entry point Chat API. Chạy độc lập:
 
 Swagger UI: http://localhost:8000/docs
 """
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from apps.chatbot.config import settings
 from apps.chatbot.routers import chat, conversations
@@ -31,7 +34,21 @@ app.add_middleware(
 app.include_router(conversations.router)
 app.include_router(chat.router)
 
+# Mount static web demo UI
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    index_file = os.path.join(STATIC_DIR, "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+    return {"message": "AI Agent Platform Demo API. Visit /docs for Swagger UI."}
+
 
 @app.get("/health", tags=["Health"], summary="Kiểm tra service còn sống")
 def health():
     return {"status": "ok"}
+

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Agent Platform — FME Chatbot Demo</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤖</text></svg>">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand-icon">🤖</div>
+        <div class="brand-info">
+          <h1>AI Agent Platform</h1>
+          <p>FME Multi-Agent System</p>
+        </div>
+      </div>
+
+      <button id="newChatBtn" class="new-chat-btn">
+        <span>➕</span> Cuộc trò chuyện mới
+      </button>
+
+      <div class="conversation-list" id="conversationList">
+        <!-- Loaded dynamically via app.js -->
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="status-pill">
+          <span class="status-dot"></span>
+          <span>Core Chatbot: <strong>Online</strong></span>
+        </div>
+        <div>Bộ nhớ: <code>InMemory / Redis</code></div>
+        <div>Phiên bản: <code>v1.0.0 (Demo)</code></div>
+      </div>
+    </aside>
+
+    <!-- Main Chat View -->
+    <main class="main-chat">
+      <!-- Top Navbar -->
+      <header class="chat-navbar">
+        <div class="navbar-title">
+          <h2 style="font-size: 15px; font-weight: 600;">Trợ lý Doanh Nghiệp FME</h2>
+          <div class="module-badges">
+            <span class="module-tag tag-hiring">🟢 Tuyển dụng (Active)</span>
+            <span class="module-tag tag-employee">🟡 Nhân sự (Sẵn sàng)</span>
+            <span class="module-tag tag-attendance">🟡 Chuyên cần</span>
+          </div>
+        </div>
+
+        <button id="openSettingsBtn" class="btn-settings">
+          <span>⚙️</span> Cài đặt API Key
+        </button>
+      </header>
+
+      <!-- Message History Container -->
+      <section class="chat-messages" id="chatMessages">
+        <div class="welcome-box">
+          <div class="welcome-icon">🤖</div>
+          <h2 class="welcome-title">AI Agent Platform FME</h2>
+          <p class="welcome-desc">
+            Hệ thống Multi-Agent thông minh hỗ trợ hỏi đáp và tra cứu dữ liệu doanh nghiệp tự động qua giao thức MCP (Model Context Protocol).
+          </p>
+          <div class="quick-prompts">
+            <div class="prompt-card" data-prompt="Có bao nhiêu ứng viên đang chờ phỏng vấn?">
+              <span>💼</span>
+              <span>Có bao nhiêu ứng viên đang chờ phỏng vấn?</span>
+            </div>
+            <div class="prompt-card" data-prompt="Danh sách vị trí đang tuyển là gì?">
+              <span>📋</span>
+              <span>Danh sách vị trí đang tuyển dụng là gì?</span>
+            </div>
+            <div class="prompt-card" data-prompt="Cho tôi thông tin ứng viên có mã UV001">
+              <span>🔍</span>
+              <span>Tra cứu thông tin ứng viên mã UV001</span>
+            </div>
+            <div class="prompt-card" data-prompt="Tổng hợp tình hình tuyển dụng tháng 8">
+              <span>📊</span>
+              <span>Báo cáo tổng hợp số liệu tuyển dụng tháng 8</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Chat Input Area -->
+      <footer class="chat-input-wrapper">
+        <div class="input-box">
+          <textarea
+            id="chatInput"
+            rows="1"
+            placeholder="Hỏi về tuyển dụng, ứng viên, phòng ban, vị trí công việc... (Nhấn Enter để gửi)"
+          ></textarea>
+          <button id="sendBtn" class="btn-send" title="Gửi tin nhắn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Cấu hình LLM Provider</h3>
+        <button id="closeSettingsBtn" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:12px; color:#94a3b8; line-height:1.5;">
+          Bạn có thể nhập API Key để Agent sử dụng LLM thông minh (Groq hoặc OpenAI). Nếu để trống, hệ thống sẽ hoạt động 100% ở chế độ Rule-based & Mock Data offline.
+        </p>
+
+        <div class="form-group">
+          <label for="settingProvider">Nhà cung cấp (Provider):</label>
+          <select id="settingProvider">
+            <option value="groq">Groq Cloud (Miễn phí & Tốc độ cao)</option>
+            <option value="openai">OpenAI (GPT-4o, GPT-4o-mini)</option>
+            <option value="ollama">Ollama (Local LLM)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="settingApiKey">API Key:</label>
+          <input type="password" id="settingApiKey" placeholder="gsk_... hoặc sk-...">
+        </div>
+
+        <div class="form-group">
+          <label for="settingModel">Model Name:</label>
+          <input type="text" id="settingModel" placeholder="openai/gpt-oss-120b hoặc gpt-4o-mini">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="saveSettingsBtn" class="btn-save">Lưu cấu hình</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

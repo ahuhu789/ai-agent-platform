@@ -190,9 +190,19 @@ class HiringAgent(BaseAgent):
                 params["to_date"] = "2026-08-31"
             return {"tool": "get_interview_schedule", "parameters": params}
 
-        # 3. Candidates waiting for interview: "bao nhiêu ứng viên đang chờ phỏng vấn", "ứng viên chờ phỏng vấn"
-        if "chờ phỏng vấn" in msg or "chờ pv" in msg or "pending_interview" in msg:
-            return {"tool": "search_candidates", "parameters": {"status": "pending_interview"}}
+        # 3. Candidates search by status: "chờ phỏng vấn", "đang phỏng vấn", "đã tuyển dụng", statuses
+        status_map = {
+            "pending_interview": ["chờ phỏng vấn", "chờ pv", "pending_interview"],
+            "interviewing": ["đang phỏng vấn", "phỏng vấn vòng", "interviewing"],
+            "offered": ["đã gửi thư mời", "offered", "nhận offer"],
+            "hired": ["đã tuyển dụng", "được tuyển dụng", "trúng tuyển", "hired", "đã vào làm"],
+            "rejected": ["bị từ chối", "từ chối", "rejected"],
+            "screening": ["sàng lọc", "screening", "duyệt hồ sơ"],
+            "applied": ["mới nộp", "applied", "mới ứng tuyển"],
+        }
+        for status_code, keywords in status_map.items():
+            if any(k in msg for k in keywords):
+                return {"tool": "search_candidates", "parameters": {"status": status_code}}
 
         # 4. Job openings: "vị trí đang tuyển", "vị trí tuyển dụng", "đang tuyển những vị trí nào", "job openings"
         if any(k in msg for k in ["vị trí đang tuyển", "vị trí tuyển dụng", "đang tuyển", "danh sách tuyển dụng", "job"]):

@@ -15,6 +15,14 @@ def test_health_check(client):
     assert response.json() == {"status": "ok"}
 
 
+def test_index_serves_html(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    assert "AI Agent Platform" in response.text
+
+
+
 def test_chat_hiring_flow(client):
     response = client.post("/chat", json={"message": "Có bao nhiêu ứng viên đang chờ phỏng vấn?"})
     assert response.status_code == 200
