@@ -45,6 +45,12 @@ TEST_CASES = [
 
     # --- Trường hợp mơ hồ giữa 2 phân hệ ---
     ("Cho tôi thông tin nhân viên đang ứng tuyển", "hiring"),  # "nhân viên" match employee, "ứng tuyển" gần hiring -> dễ nhầm
+    ("Nhân viên A nghỉ phép mấy ngày?", "attendance"),
+    ("Nhân viên A đi muộn mấy lần?", "attendance"),
+    ("Ai đi trễ nhiều nhất?", "attendance"),
+    ("ai di tre nhieu nhat", "attendance"),
+    ("Tháng này ai vắng mặt?", "attendance"),
+    ("Nhan vien A phong ban gi?", "employee"),
 
     # --- Trường hợp biên: message rỗng ---
     ("", None),

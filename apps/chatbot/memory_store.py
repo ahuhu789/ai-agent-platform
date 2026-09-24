@@ -208,7 +208,7 @@ class ChatbotMemoryAdapter:
             raw_data = data["raw_tool_result"].get("data")
             if isinstance(raw_data, dict):
                 emp_id = raw_data.get("employee_id") or raw_data.get("id")
-        if emp_id:
+        if emp_id and str(emp_id).upper() != "ALL":
             updates[LAST_EMPLOYEE_ID] = emp_id
             updates["last_employee_id"] = emp_id
 
@@ -218,7 +218,7 @@ class ChatbotMemoryAdapter:
             raw_data = data["raw_tool_result"].get("data")
             if isinstance(raw_data, dict):
                 emp_name = raw_data.get("employee_name") or raw_data.get("name")
-        if emp_name:
+        if emp_name and emp_name not in ("Tất cả nhân viên", "Toàn bộ nhân viên", "Nhân viên"):
             updates[LAST_EMPLOYEE_NAME] = emp_name
             updates["last_employee_name"] = emp_name
 

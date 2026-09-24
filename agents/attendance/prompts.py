@@ -25,7 +25,7 @@ Danh sách Tool có sẵn:
    - year: năm (mặc định 2026)
 
 2. `get_late_arrival_summary(employee_id, month, year)`
-   - employee_id: mã hoặc tên nhân viên
+   - employee_id: mã hoặc tên nhân viên (hoặc "ALL" nếu người dùng hỏi về tập thể, toàn công ty, hoặc hỏi "ai đi trễ nhiều nhất", "những ai đi trễ", "danh sách đi trễ")
    - month: tháng (1-12)
    - year: năm
 
@@ -36,7 +36,7 @@ Danh sách Tool có sẵn:
    - limit: số lượng tối đa
 
 4. `get_absence_summary(employee_id, month, year)`
-   - employee_id: mã hoặc tên nhân viên
+   - employee_id: mã hoặc tên nhân viên (hoặc "ALL" nếu người dùng hỏi "ai vắng mặt", "ai nghỉ phép", "ai vắng nhiều nhất")
    - month: tháng (1-12)
    - year: năm
 

@@ -18,9 +18,24 @@ def strip_diacritics(text: str) -> str:
 # Lý do: một số từ (vd "nhân viên") xuất hiện chung ở nhiều phân hệ, nên những
 # từ khóa "đặc trưng" hơn (chỉ riêng 1 phân hệ) cần được ưu tiên kiểm tra trước.
 INTENT_KEYWORDS = {
-    "hiring": ["ứng viên", "phỏng vấn", "tuyển dụng", "vị trí tuyển", "đang tuyển", "ứng tuyển"],
-    "attendance": ["đi làm", "đi trễ", "vắng mặt", "chuyên cần", "chấm công"],
-    "employee": ["nhân viên", "phòng ban", "hồ sơ nhân sự", "hồ sơ nhân viên", "nhân sự"],
+    "hiring": [
+        "ứng viên", "phỏng vấn", "tuyển dụng", "vị trí tuyển", "đang tuyển",
+        "ứng tuyển", "tìm ứng viên", "hồ sơ ứng viên", "lịch phỏng vấn", "lịch pv",
+        "trúng tuyển", "thư mời nhận việc", "offer", "job opening", "jd",
+    ],
+    "attendance": [
+        "đi làm", "đi trễ", "đi muộn", "muộn giờ", "vắng mặt", "chuyên cần",
+        "chấm công", "nghỉ phép", "nghỉ không phép", "ngày công", "số ngày làm",
+        "lịch sử chấm công", "lịch sử chuyên cần", "giờ vào", "giờ ra",
+        "check in", "check out", "tỷ lệ đi làm", "ai đi trễ", "ai vắng mặt",
+        "ai đi làm", "ai nghỉ phép", "ai muộn", "trễ nhiều nhất", "muộn nhiều nhất",
+        "vắng nhiều nhất", "nghỉ nhiều nhất",
+    ],
+    "employee": [
+        "nhân viên", "phòng ban", "hồ sơ nhân sự", "hồ sơ nhân viên", "nhân sự",
+        "chức vụ", "trưởng phòng", "danh sách nhân viên", "thông tin nhân viên",
+        "tìm nhân viên", "tra cứu nhân viên", "hồ sơ chi tiết",
+    ],
 }
 
 # Bản không dấu của từ khóa, tính sẵn 1 lần khi load module (đỡ tính lại mỗi lần gọi)

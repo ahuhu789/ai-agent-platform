@@ -3,6 +3,8 @@
 import json
 import os
 import re
+import unicodedata
+from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
 try:
@@ -15,6 +17,14 @@ from shared.abstractions.agent import AgentRequest, AgentResponse, BaseAgent
 from shared.abstractions.llm import BaseLLM, LLMRequest
 from mcp_servers.attendance.tools import AttendanceTools
 from .prompts import ATTENDANCE_AGENT_SYSTEM_PROMPT, INTENT_EXTRACTION_PROMPT
+
+
+def strip_diacritics(text: str) -> str:
+    """Bỏ dấu tiếng Việt để so khớp câu hỏi có dấu và không dấu."""
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = text.replace("đ", "d").replace("Đ", "D")
+    return unicodedata.normalize("NFC", text)
 
 
 class AttendanceAgent(BaseAgent):
@@ -148,8 +158,22 @@ class AttendanceAgent(BaseAgent):
         return self._extract_intent_rule_based(message, context)
 
     def _extract_intent_rule_based(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Fast offline rule-based intent parsing."""
+        """Fast offline rule-based intent parsing with diacritics stripping & aggregate query support."""
         msg_lower = message.lower().strip()
+        msg_no_dia = strip_diacritics(msg_lower)
+
+        def match_any(keywords):
+            return any(k in msg_lower or k in msg_no_dia for k in keywords)
+
+        # Check for aggregate cues: "ai", "ai đi trễ", "ai vắng mặt", "tất cả", "nhiều nhất", etc.
+        has_aggregate_cue = match_any([
+            "ai di tre", "ai đi trễ", "ai muon", "ai muộn", "ai vang", "ai vắng",
+            "ai nghi", "ai nghỉ", "ai di lam", "ai đi làm",
+            "nhieu nhat", "nhiều nhất", "it nhat", "ít nhất",
+            "toan bo", "toàn bộ", "tat ca", "tất cả", "toan cong ty", "toàn công ty",
+            "nhung ai", "những ai", "nhan vien nao", "nhân viên nào"
+        ])
+        is_who_question = match_any(["ai", "những ai", "ai đó"])
 
         # Extract Employee ID or Name
         id_match = re.search(r"\b(nv[- ]?\d{3,4})\b", msg_lower, re.IGNORECASE)
@@ -160,42 +184,53 @@ class AttendanceAgent(BaseAgent):
         # Look for "nhân viên A" or "nhân viên B"
         if not emp_id:
             name_match = re.search(r"nhân viên\s+([a-zA-Z0-9à-ỹÀ-Ỹ\s]+?)(?:\s+đi|\s+có|\s+vắng|\s+nghỉ|\s*\?|$)", msg_lower)
+            if not name_match:
+                name_match = re.search(r"nhan vien\s+([a-zA-Z0-9\s]+?)(?:\s+di|\s+co|\s+vang|\s+nghi|\s*\?|$)", msg_no_dia)
             if name_match:
                 emp_name_part = name_match.group(1).strip().upper()
                 if emp_name_part in ("A", "B", "C", "D", "E", "F", "G", "H", "I"):
                     emp_id = f"NV00{ord(emp_name_part) - ord('A') + 1}"
                 elif emp_name_part == "K":
                     emp_id = "NV010"
-                elif not any(p in emp_name_part.lower() for p in ["này", "đó", "ấy", "kia"]):
+                elif any(p in emp_name_part.lower() for p in ["này", "nay", "đó", "do", "ấy", "ay", "kia"]):
+                    emp_id = None
+                elif any(p in emp_name_part.lower() for p in ["nào", "nao", "ai"]):
+                    emp_id = None
+                else:
                     emp_id = name_match.group(1).strip()
 
-        # Fallback to context
-        if not emp_id and context:
+        # If user asked an aggregate / who question and didn't specify a specific employee
+        is_aggregate = (has_aggregate_cue or is_who_question) and (emp_id is None)
+
+        # Fallback to context ONLY if not an aggregate query
+        if not emp_id and not is_aggregate and context:
             emp_id = context.get("last_employee_id") or context.get("last_mentioned_employee_id")
 
         # Extract month & year from message if mentioned (e.g. "tháng 8", "tháng 9")
-        month_match = re.search(r"tháng\s+(\d{1,2})", msg_lower)
-        target_month = int(month_match.group(1)) if month_match else 9
-        year_match = re.search(r"năm\s+(\d{4})", msg_lower)
-        target_year = int(year_match.group(1)) if year_match else 2026
+        month_match = re.search(r"tháng\s+(\d{1,2})", msg_lower) or re.search(r"thang\s+(\d{1,2})", msg_no_dia)
+        year_match = re.search(r"năm\s+(\d{4})", msg_lower) or re.search(r"nam\s+(\d{4})", msg_no_dia)
+
+        now = datetime.now()
+        target_month = int(month_match.group(1)) if month_match else (now.month if now.year == 2026 and now.month in (8, 9) else 9)
+        target_year = int(year_match.group(1)) if year_match else (now.year if now.year >= 2024 else 2026)
 
         # Extract dates YYYY-MM-DD
         dates = re.findall(r"\b(\d{4}-\d{2}-\d{2})\b", message)
         from_date = dates[0] if len(dates) > 0 else None
         to_date = dates[1] if len(dates) > 1 else None
 
-        # 1. Late arrival query: "đi trễ bao nhiêu lần", "đi muộn", "số lần trễ"
-        if any(kw in msg_lower for kw in ["đi trễ", "di tre", "đi muộn", "muộn giờ", "trễ bao nhiêu"]):
-            target_emp = emp_id or "NV001"
+        # 1. Late arrival query: "đi trễ", "đi muộn", "muộn giờ", "trễ bao nhiêu", "ai đi trễ", "trễ nhiều nhất"
+        if match_any(["đi trễ", "di tre", "đi muộn", "di muon", "muộn giờ", "muon gio", "trễ bao nhiêu", "tre bao nhieu", "số lần trễ", "so lan tre", "trễ nhiều nhất", "tre nhieu nhat", "muộn nhiều nhất", "muon nhieu nhat", "ai trễ", "ai tre"]):
+            target_emp = "ALL" if is_aggregate else (emp_id or "NV001")
             return {
                 "tool": "get_late_arrival_summary",
                 "parameters": {"employee_id": target_emp, "month": target_month, "year": target_year},
                 "needs_more_info": False,
             }
 
-        # 2. Absence / Leave query: "vắng mặt", "nghỉ phép", "nghỉ việc"
-        if any(kw in msg_lower for kw in ["vắng mặt", "vang mat", "nghỉ phép", "nghi phep", "nghỉ không phép"]):
-            target_emp = emp_id or "NV001"
+        # 2. Absence / Leave query: "vắng mặt", "nghỉ phép", "nghỉ việc", "ai vắng", "vắng nhiều nhất"
+        if match_any(["vắng mặt", "vang mat", "nghỉ phép", "nghi phep", "nghỉ không phép", "nghi khong phep", "vắng", "vang", "nghỉ việc", "nghi viec", "vắng nhiều nhất", "vang nhieu nhat", "ai vắng", "ai vang", "ai nghỉ", "ai nghi"]):
+            target_emp = "ALL" if is_aggregate else (emp_id or "NV001")
             return {
                 "tool": "get_absence_summary",
                 "parameters": {"employee_id": target_emp, "month": target_month, "year": target_year},
@@ -203,7 +238,7 @@ class AttendanceAgent(BaseAgent):
             }
 
         # 3. Attendance history: "lịch sử chuyên cần", "lịch sử chấm công", "từ ngày ... đến ngày ..."
-        if any(kw in msg_lower for kw in ["lịch sử", "lich su", "chấm công từ", "từ ngày"]):
+        if match_any(["lịch sử", "lich su", "chấm công từ", "cham cong tu", "từ ngày", "tu ngay", "chi tiết chấm công", "chi tiet cham cong"]):
             target_emp = emp_id or "NV001"
             return {
                 "tool": "get_attendance_history",
@@ -216,7 +251,13 @@ class AttendanceAgent(BaseAgent):
             }
 
         # 4. Monthly attendance / Days worked: "đi làm bao nhiêu ngày", "tháng này đi làm", "chuyên cần tháng"
-        if any(kw in msg_lower for kw in ["đi làm", "di lam", "bao nhiêu ngày", "tháng này", "tháng 8", "tháng 9"]):
+        if match_any(["đi làm", "di lam", "bao nhiêu ngày", "bao nhieu ngay", "ngày công", "ngay cong", "tháng này", "thang nay", "tháng 8", "thang 8", "tháng 9", "thang 9", "số ngày làm", "so ngay lam", "chuyên cần tháng", "chuyen can thang"]):
+            if is_aggregate:
+                return {
+                    "tool": "get_attendance_statistics",
+                    "parameters": {"month": target_month, "year": target_year},
+                    "needs_more_info": False,
+                }
             target_emp = emp_id or "NV001"
             return {
                 "tool": "get_monthly_attendance",
@@ -224,11 +265,11 @@ class AttendanceAgent(BaseAgent):
                 "needs_more_info": False,
             }
 
-        # 5. Overall statistics: "thống kê chuyên cần", "tỷ lệ đi làm", "tổng hợp chuyên cần"
-        if any(kw in msg_lower for kw in ["thống kê", "tỷ lệ chuyên cần", "tổng hợp"]):
+        # 5. Overall statistics: "thống kê chuyên cần", "tỷ lệ đi làm", "tổng hợp chuyên cần", "toàn công ty"
+        if match_any(["thống kê", "thong ke", "tỷ lệ chuyên cần", "ty le chuyen can", "tổng hợp", "tong hop", "toàn công ty", "toan cong ty", "báo cáo chuyên cần", "bao cao chuyen can"]):
             return {
                 "tool": "get_attendance_statistics",
-                "parameters": {"month": 9, "year": 2026},
+                "parameters": {"month": target_month, "year": target_year},
                 "needs_more_info": False,
             }
 
@@ -236,13 +277,13 @@ class AttendanceAgent(BaseAgent):
         if emp_id:
             return {
                 "tool": "get_monthly_attendance",
-                "parameters": {"employee_id": emp_id, "month": 9, "year": 2026},
+                "parameters": {"employee_id": emp_id, "month": target_month, "year": target_year},
                 "needs_more_info": False,
             }
 
         return {
             "tool": "get_attendance_statistics",
-            "parameters": {"month": 9, "year": 2026},
+            "parameters": {"month": target_month, "year": target_year},
             "needs_more_info": False,
         }
 
@@ -360,6 +401,40 @@ class AttendanceAgent(BaseAgent):
             total_mins = data.get("total_late_minutes", 0)
             details = data.get("details", [])
 
+            # Trường hợp truy vấn tập thể / toàn công ty (VD: "Ai đi trễ nhiều nhất?")
+            if emp_id == "ALL" or emp_name in ("Toàn bộ nhân viên", "Tất cả nhân viên"):
+                if not details:
+                    return f"🎉 Trong tháng {month}/{year}, toàn công ty không có nhân viên nào đi trễ."
+
+                from collections import defaultdict
+                emp_stats = defaultdict(lambda: {"name": "", "count": 0, "minutes": 0, "dates": []})
+                for d in details:
+                    eid = d.get("employee_id", "NV")
+                    ename = d.get("employee_name", eid)
+                    emp_stats[eid]["name"] = ename
+                    emp_stats[eid]["count"] += 1
+                    emp_stats[eid]["minutes"] += d.get("late_minutes", 0)
+                    emp_stats[eid]["dates"].append(f"{d.get('date')} ({d.get('late_minutes')}p)")
+
+                sorted_emps = sorted(emp_stats.items(), key=lambda x: (x[1]["count"], x[1]["minutes"]), reverse=True)
+                max_count = sorted_emps[0][1]["count"] if sorted_emps else 0
+                top_late_names = [f"**{info['name']}** (`{eid}` - {info['count']} lần)" for eid, info in sorted_emps if info["count"] == max_count]
+
+                lines = [
+                    f"⏰ **Thống kê nhân viên đi trễ tháng {month}/{year}:**\n",
+                    f"- **Nhân viên đi trễ nhiều nhất:** {', '.join(top_late_names)}",
+                    f"- **Tổng số lượt đi trễ toàn công ty:** **{late_count} lượt** (Tổng cộng: {total_mins} phút)\n",
+                    "**Bảng xếp hạng đi trễ chi tiết:**",
+                    "| Nhân viên | Mã NV | Số lần trễ | Tổng phút trễ | Chi tiết ngày trễ |",
+                    "| :--- | :--- | :--- | :--- | :--- |",
+                ]
+                for eid, info in sorted_emps:
+                    date_str = ", ".join(info["dates"])
+                    lines.append(f"| **{info['name']}** | `{eid}` | **{info['count']}** lần | {info['minutes']} phút | {date_str} |")
+
+                return "\n".join(lines)
+
+            # Trường hợp cá nhân 1 nhân viên
             lines = [
                 f"⏰ **Thống kê đi trễ tháng {month}/{year}:**\n",
                 f"- **Nhân viên:** **{emp_name}** (`{emp_id}`)",
@@ -397,10 +472,43 @@ class AttendanceAgent(BaseAgent):
         if tool_name == "get_absence_summary":
             emp_name = data.get("employee_name", "Nhân viên")
             emp_id = data.get("employee_id", "")
+            month = data.get("month", 9)
+            year = data.get("year", 2026)
             absent_days = data.get("absent_days", 0)
             leave_perm = data.get("leave_with_permission", 0)
             details = data.get("details", [])
 
+            # Trường hợp truy vấn tập thể / toàn công ty (VD: "Ai vắng mặt nhiều nhất?")
+            if emp_id == "ALL" or emp_name in ("Toàn bộ nhân viên", "Tất cả nhân viên"):
+                if not details:
+                    return f"🎉 Trong tháng {month}/{year}, toàn công ty không có nhân viên nào vắng mặt hay nghỉ phép."
+
+                from collections import defaultdict
+                emp_absent = defaultdict(lambda: {"name": "", "count": 0, "reasons": []})
+                for d in details:
+                    eid = d.get("employee_id", "NV")
+                    ename = d.get("employee_name", eid)
+                    emp_absent[eid]["name"] = ename
+                    emp_absent[eid]["count"] += 1
+                    emp_absent[eid]["reasons"].append(f"{d.get('date')} (*{d.get('notes', 'Nghỉ phép')}*)")
+
+                sorted_absent = sorted(emp_absent.items(), key=lambda x: x[1]["count"], reverse=True)
+                max_absent = sorted_absent[0][1]["count"] if sorted_absent else 0
+                top_absent_names = [f"**{info['name']}** (`{eid}` - {info['count']} ngày)" for eid, info in sorted_absent if info["count"] == max_absent]
+
+                lines = [
+                    f"🏖️ **Báo cáo nhân viên vắng mặt / nghỉ phép tháng {month}/{year}:**\n",
+                    f"- **Nhân viên vắng mặt nhiều nhất:** {', '.join(top_absent_names)}",
+                    f"- **Tổng số ngày nghỉ toàn công ty:** **{absent_days} ngày**\n",
+                    "**Danh sách chi tiết:**",
+                ]
+                for eid, info in sorted_absent:
+                    reasons_str = "; ".join(info["reasons"])
+                    lines.append(f"- **{info['name']}** (`{eid}`): **{info['count']} ngày** ({reasons_str})")
+
+                return "\n".join(lines)
+
+            # Trường hợp cá nhân 1 nhân viên
             lines = [
                 f"🏖️ **Báo cáo vắng mặt & nghỉ phép:**\n",
                 f"- **Nhân viên:** **{emp_name}** (`{emp_id}`)",

@@ -66,3 +66,27 @@ def test_agent_needs_more_info(agent):
     assert res.success is True
     assert res.data.get("status") == "needs_more_info"
     assert "mã nhân viên" in res.data["response"]
+
+
+def test_agent_get_employee_department_no_diacritics(agent):
+    req = AgentRequest(message="nhan vien A thuoc phong ban nao")
+    res = agent.handle(req)
+    assert res.success is True
+    assert res.data["tool"] == "get_employee_department"
+    assert "Phòng Kỹ thuật" in res.data["response"]
+
+
+def test_agent_get_department_list_no_diacritics(agent):
+    req = AgentRequest(message="danh sach phong ban")
+    res = agent.handle(req)
+    assert res.success is True
+    assert res.data["tool"] == "get_department_list"
+    assert "Phòng Kỹ thuật" in res.data["response"]
+
+
+def test_agent_department_what(agent):
+    req = AgentRequest(message="Nhân viên A phòng ban gì?")
+    res = agent.handle(req)
+    assert res.success is True
+    assert res.data["tool"] == "get_employee_department"
+    assert "Phòng Kỹ thuật" in res.data["response"]

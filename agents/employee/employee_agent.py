@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import unicodedata
 from typing import Any, Callable, Dict, Optional
 
 try:
@@ -15,6 +16,14 @@ from shared.abstractions.agent import AgentRequest, AgentResponse, BaseAgent
 from shared.abstractions.llm import BaseLLM, LLMRequest
 from mcp_servers.employee.tools import EmployeeTools
 from .prompts import EMPLOYEE_AGENT_SYSTEM_PROMPT, INTENT_EXTRACTION_PROMPT
+
+
+def strip_diacritics(text: str) -> str:
+    """Bỏ dấu tiếng Việt để so khớp câu hỏi có dấu và không dấu."""
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = text.replace("đ", "d").replace("Đ", "D")
+    return unicodedata.normalize("NFC", text)
 
 
 class EmployeeAgent(BaseAgent):
@@ -148,14 +157,38 @@ class EmployeeAgent(BaseAgent):
         return self._extract_intent_rule_based(message, context)
 
     def _extract_intent_rule_based(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Fast offline rule-based intent parsing."""
+        """Fast offline rule-based intent parsing with diacritics stripping."""
         msg_lower = message.lower().strip()
+        msg_no_dia = strip_diacritics(msg_lower)
+
+        def match_any(keywords):
+            return any(k in msg_lower or k in msg_no_dia for k in keywords)
 
         # Check for employee ID pattern (e.g. NV001, NV-001, NV 001)
         id_match = re.search(r"\b(nv[- ]?\d{3,4})\b", msg_lower, re.IGNORECASE)
         emp_id = None
         if id_match:
             emp_id = id_match.group(1).upper().replace(" ", "").replace("-", "")
+
+        # Look for "nhân viên A" or "nhân viên B" or full name
+        if not emp_id:
+            letter_match = re.search(r"(?:nhân viên|nhan vien)\s+([A-Za-z])\b", message, re.IGNORECASE)
+            if letter_match:
+                emp_name_part = letter_match.group(1).upper()
+                if emp_name_part in ("A", "B", "C", "D", "E", "F", "G", "H", "I"):
+                    emp_id = f"NV00{ord(emp_name_part) - ord('A') + 1}"
+                elif emp_name_part == "K":
+                    emp_id = "NV010"
+                else:
+                    emp_id = emp_name_part
+            else:
+                name_match = re.search(r"(?:nhân viên|nhan vien)\s+([a-zA-Z0-9à-ỹÀ-Ỹ\s]+?)(?:\s+thuộc|\s+thuoc|\s+ở|\s+o|\s+có|\s+co|\s+phòng|\s+phong|\s+ban|\s*\?|$)", message, re.IGNORECASE)
+                if name_match:
+                    emp_name_part = name_match.group(1).strip()
+                    if any(p in emp_name_part.lower() for p in ["này", "nay", "đó", "do", "ấy", "ay", "kia", "nào", "nao", "ai"]):
+                        emp_id = None
+                    else:
+                        emp_id = emp_name_part
 
         # Recover from context if available
         ctx_emp_id = None
@@ -166,12 +199,21 @@ class EmployeeAgent(BaseAgent):
 
         emp_id = emp_id or ctx_emp_id
 
-        # 1. "Nhân viên A thuộc phòng ban nào?" / "thuộc phòng ban nào" / "ở phòng nào"
-        if any(kw in msg_lower for kw in ["thuộc phòng ban", "ở phòng ban", "ở phòng nào", "thuộc khoa nào"]):
+        # 1. Department list: "danh sách phòng ban", "công ty có những phòng ban nào", "các phòng ban"
+        # Check this BEFORE get_employee_department so "Công ty có những phòng ban nào?" doesn't get hijacked
+        if match_any(["danh sách phòng ban", "danh sach phong ban", "các phòng ban", "cac phong ban", "những phòng ban", "nhung phong ban", "các khoa phòng", "cac khoa phong", "công ty có những phòng ban nào", "co nhung phong ban nao"]):
+            return {
+                "tool": "get_department_list",
+                "parameters": {},
+                "needs_more_info": False,
+            }
+
+        # 2. "Nhân viên A thuộc phòng ban nào?" / "thuộc phòng ban nào" / "ở phòng nào" / "phòng ban gì"
+        if match_any(["thuộc phòng ban", "thuoc phong ban", "ở phòng ban", "o phong ban", "ở phòng nào", "o phong nao", "thuộc khoa nào", "thuoc khoa nao", "phòng ban nào", "phong ban nao", "phòng ban gì", "phong ban gi", "ở phòng gì", "o phong gi", "bộ phận nào", "bo phan nao", "phòng ban của", "phong ban cua"]):
             # Extract employee name or identifier
-            name_match = re.search(r"(?:nhân viên|thông tin|bạn)\s+([a-zA-Z0-9\s_à-ỹÀ-Ỹ]+?)(?:\s+thuộc|\s+ở|\s*\?|$)", message, re.IGNORECASE)
+            name_match = re.search(r"(?:nhân viên|nhan vien|thông tin|thong tin|bạn|ban)\s+([a-zA-Z0-9\s_à-ỹÀ-Ỹ]+?)(?:\s+thuộc|\s+thuoc|\s+ở|\s+o|\s+phòng|\s+phong|\s+ban|\s*\?|$)", message, re.IGNORECASE)
             extracted_name = name_match.group(1).strip() if name_match else None
-            if extracted_name and any(p in extracted_name.lower() for p in ["này", "đó", "ấy", "kia"]):
+            if extracted_name and any(p in extracted_name.lower() for p in ["này", "nay", "đó", "do", "ấy", "ay", "kia", "nào", "nao"]):
                 extracted_name = None
 
             identifier = emp_id or extracted_name or ctx_emp_name or "A"
@@ -181,8 +223,8 @@ class EmployeeAgent(BaseAgent):
                 "needs_more_info": False,
             }
 
-        # 2. "Tìm thông tin nhân viên có mã ..." / "xem hồ sơ nhân viên"
-        if emp_id and any(kw in msg_lower for kw in ["thông tin", "hồ sơ", "chi tiết", "mã", "tìm", "người này", "bạn này"]):
+        # 3. "Tìm thông tin nhân viên có mã ..." / "xem hồ sơ nhân viên"
+        if emp_id and match_any(["thông tin", "thong tin", "hồ sơ", "ho so", "chi tiết", "chi tiet", "mã", "ma", "tìm", "tim", "người này", "nguoi nay", "bạn này", "ban nay"]):
             return {
                 "tool": "get_employee_profile",
                 "parameters": {"employee_id": emp_id},
@@ -190,7 +232,7 @@ class EmployeeAgent(BaseAgent):
             }
 
         # If asking for profile without ID
-        if any(kw in msg_lower for kw in ["xem hồ sơ", "chi tiết nhân viên", "thông tin nhân viên"]):
+        if match_any(["xem hồ sơ", "xem ho so", "chi tiết nhân viên", "chi tiet nhan vien", "thông tin nhân viên", "thong tin nhan vien"]):
             if emp_id:
                 return {
                     "tool": "get_employee_profile",
@@ -204,16 +246,10 @@ class EmployeeAgent(BaseAgent):
                 "clarification_message": "Vui lòng cung cấp mã nhân viên (ví dụ: NV001) để tôi tra cứu hồ sơ chi tiết giúp bạn.",
             }
 
-        # 3. Department list: "danh sách phòng ban", "công ty có những phòng ban nào", "các phòng ban"
-        if any(kw in msg_lower for kw in ["danh sách phòng ban", "các phòng ban", "những phòng ban", "các khoa phòng"]):
-            return {
-                "tool": "get_department_list",
-                "parameters": {},
-                "needs_more_info": False,
-            }
-
         # 4. Department member count / Summary: "Phòng ban Kỹ thuật có bao nhiêu nhân viên?", "Phòng ... có bao nhiêu người"
         dept_count_match = re.search(r"phòng\s+(?:ban\s+)?([a-zA-Z\s_à-ỹÀ-Ỹ]+?)\s+có\s+bao\s+nhiêu\s+(?:nhân viên|người)", msg_lower)
+        if not dept_count_match:
+            dept_count_match = re.search(r"phong\s+(?:ban\s+)?([a-zA-Z\s_]+?)\s+co\s+bao\s+nhieu\s+(?:nhan vien|nguoi)", msg_no_dia)
         if dept_count_match:
             dept_name = dept_count_match.group(1).strip()
             return {
@@ -222,7 +258,7 @@ class EmployeeAgent(BaseAgent):
                 "needs_more_info": False,
             }
 
-        if any(kw in msg_lower for kw in ["thống kê nhân sự", "tổng số nhân viên", "có bao nhiêu nhân viên", "bao nhiêu người"]):
+        if match_any(["thống kê nhân sự", "thong ke nhan su", "tổng số nhân viên", "tong so nhan vien", "có bao nhiêu nhân viên", "co bao nhieu nhan vien", "bao nhiêu người", "bao nhieu nguoi", "quy mô nhân sự", "quy mo nhan su"]):
             return {
                 "tool": "get_employee_summary",
                 "parameters": {},
@@ -230,7 +266,7 @@ class EmployeeAgent(BaseAgent):
             }
 
         # 5. Search employees: "tìm nhân viên", "danh sách nhân viên"
-        if any(kw in msg_lower for kw in ["tìm nhân viên", "danh sách nhân viên", "tra cứu nhân viên"]):
+        if match_any(["tìm nhân viên", "tim nhan vien", "danh sách nhân viên", "danh sach nhan vien", "tra cứu nhân viên", "tra cuu nhan vien", "toàn bộ nhân sự", "toan bo nhan su", "danh sách nhân sự", "danh sach nhan su"]):
             return {
                 "tool": "search_employees",
                 "parameters": {"limit": 10},
@@ -238,9 +274,10 @@ class EmployeeAgent(BaseAgent):
             }
 
         # Fallback to search if keyword present
+        clean_keyword = re.sub(r"^(?:cho tôi xem|cho toi xem|tìm|tim|hãy tìm|xem)\s+", "", message, flags=re.IGNORECASE).strip()
         return {
             "tool": "search_employees",
-            "parameters": {"keyword": message, "limit": 5},
+            "parameters": {"keyword": clean_keyword or message, "limit": 5},
             "needs_more_info": False,
         }
 

@@ -6,8 +6,15 @@ import os
 import urllib.request
 import urllib.parse
 import json
+import unicodedata
 
 from .mock_data import MOCK_DEPARTMENTS, MOCK_EMPLOYEES
+
+
+def _strip_diacritics(text: str) -> str:
+    text = unicodedata.normalize("NFD", text.lower())
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+    return text.replace("đ", "d").replace("Đ", "D")
 
 
 class EmployeeFunctionSupport(ABC):
@@ -70,7 +77,9 @@ class MockEmployeeSupport(EmployeeFunctionSupport):
                 continue
             if kw:
                 search_blob = f"{emp.get('id', '')} {emp.get('name', '')} {emp.get('position', '')} {emp.get('department_name', '')}".lower()
-                if kw not in search_blob:
+                search_blob_no_dia = _strip_diacritics(search_blob)
+                kw_no_dia = _strip_diacritics(kw)
+                if kw not in search_blob and kw_no_dia not in search_blob_no_dia:
                     continue
             results.append(dict(emp))
             if len(results) >= limit:
@@ -88,11 +97,36 @@ class MockEmployeeSupport(EmployeeFunctionSupport):
         return [dict(dept) for dept in self.departments]
 
     def get_employee_department(self, identifier: str) -> Optional[Dict[str, Any]]:
-        """Look up department for an employee by ID or Name."""
+        """Look up department for an employee by ID or Name (supports both accented and unaccented)."""
         target = identifier.strip().lower()
+        target_no_dia = _strip_diacritics(target)
+
+        alias_map = {
+            "a": "NV001", "nhan vien a": "NV001", "nv a": "NV001",
+            "b": "NV002", "nhan vien b": "NV002", "nv b": "NV002",
+            "c": "NV003", "nhan vien c": "NV003", "nv c": "NV003",
+            "d": "NV004", "nhan vien d": "NV004", "nv d": "NV004",
+            "e": "NV005", "nhan vien e": "NV005", "nv e": "NV005",
+            "f": "NV006", "nhan vien f": "NV006", "nv f": "NV006",
+            "g": "NV007", "nhan vien g": "NV007", "nv g": "NV007",
+            "h": "NV008", "nhan vien h": "NV008", "nv h": "NV008",
+            "i": "NV009", "nhan vien i": "NV009", "nv i": "NV009",
+            "k": "NV010", "nhan vien k": "NV010", "nv k": "NV010",
+        }
+        resolved_id = alias_map.get(target_no_dia)
+
         # Direct search by ID or name
         for emp in self.employees:
-            if emp.get("id", "").lower() == target or target in emp.get("name", "").lower():
+            emp_id = emp.get("id", "").lower()
+            emp_name = emp.get("name", "").lower()
+            emp_name_no_dia = _strip_diacritics(emp_name)
+
+            if (
+                emp_id == target
+                or (resolved_id and emp_id == resolved_id.lower())
+                or target in emp_name
+                or target_no_dia in emp_name_no_dia
+            ):
                 return {
                     "employee_id": emp.get("id"),
                     "employee_name": emp.get("name"),

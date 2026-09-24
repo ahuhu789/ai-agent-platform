@@ -56,3 +56,31 @@ def test_agent_general_attendance_statistics(agent):
     assert res.success is True
     assert res.data["tool"] == "get_attendance_statistics"
     assert "Báo cáo chuyên cần tổng hợp" in res.data["response"]
+
+
+def test_agent_who_was_late_most(agent):
+    req = AgentRequest(message="Ai đi trễ nhiều nhất?")
+    res = agent.handle(req)
+    assert res.success is True
+    assert res.data["tool"] == "get_late_arrival_summary"
+    assert res.data["parameters"]["employee_id"] == "ALL"
+    assert "Nhân viên đi trễ nhiều nhất" in res.data["response"]
+    assert "Nguyễn Văn A" in res.data["response"] or "Lê Hoàng C" in res.data["response"]
+
+
+def test_agent_who_was_late_most_no_diacritics(agent):
+    req = AgentRequest(message="ai di tre nhieu nhat")
+    res = agent.handle(req)
+    assert res.success is True
+    assert res.data["tool"] == "get_late_arrival_summary"
+    assert res.data["parameters"]["employee_id"] == "ALL"
+    assert "Nhân viên đi trễ nhiều nhất" in res.data["response"]
+
+
+def test_agent_who_was_absent(agent):
+    req = AgentRequest(message="Tháng này ai vắng mặt?")
+    res = agent.handle(req)
+    assert res.success is True
+    assert res.data["tool"] == "get_absence_summary"
+    assert res.data["parameters"]["employee_id"] == "ALL"
+    assert "Báo cáo nhân viên vắng mặt" in res.data["response"]
