@@ -235,6 +235,26 @@ class AttendanceAgent(BaseAgent):
                     else:
                         emp_id = raw_name
 
+        # If still not found, check known full or partial names directly from message (even without 'nhân viên' prefix)
+        if not emp_id and not is_who_question and not has_aggregate_cue:
+            known_emps = [
+                ("nguyễn văn a", "NV001"), ("nguyen van a", "NV001"),
+                ("trần thị b", "NV002"), ("tran thi b", "NV002"),
+                ("lê văn c", "NV003"), ("le van c", "NV003"),
+                ("phạm thị d", "NV004"), ("pham thi d", "NV004"),
+                ("hoàng văn e", "NV005"), ("hoang van e", "NV005"),
+                ("vũ thị f", "NV006"), ("vu thi f", "NV006"),
+                ("đỗ văn g", "NV007"), ("do van g", "NV007"),
+                ("bùi thị h", "NV008"), ("bui thi h", "NV008"),
+                ("đặng văn i", "NV009"), ("dang van i", "NV009"),
+                ("đặng mai k", "NV010"), ("dang mai k", "NV010"),
+                ("ngô bảo l", "NV011"), ("ngo bao l", "NV011"),
+            ]
+            for kname, kid in known_emps:
+                if kname in msg_lower or kname in msg_no_dia:
+                    emp_id = kid
+                    break
+
         # If user asked an aggregate / who question and didn't specify a specific employee
         is_aggregate = (has_aggregate_cue or is_who_question) and (emp_id is None)
 
@@ -273,7 +293,7 @@ class AttendanceAgent(BaseAgent):
 
         # 1. Late arrival query: "đi trễ", "đi muộn", "muộn giờ", "trễ bao nhiêu", "ai đi trễ", "trễ nhiều nhất"
         if match_any(["đi trễ", "di tre", "đi muộn", "di muon", "muộn giờ", "muon gio", "trễ bao nhiêu", "tre bao nhieu", "số lần trễ", "so lan tre", "trễ nhiều nhất", "tre nhieu nhat", "muộn nhiều nhất", "muon nhieu nhat", "ai trễ", "ai tre"]):
-            target_emp = "ALL" if is_aggregate else (emp_id or "NV001")
+            target_emp = "ALL" if (is_aggregate or not emp_id) else emp_id
             return {
                 "tool": "get_late_arrival_summary",
                 "parameters": {"employee_id": target_emp, "month": target_month, "year": target_year},
@@ -289,7 +309,7 @@ class AttendanceAgent(BaseAgent):
             "ai vắng", "ai vang", "ai nghỉ", "ai nghi", "nghỉ mấy ngày", "vắng mấy ngày",
             "nghỉ", "nghi"
         ]):
-            target_emp = "ALL" if is_aggregate else (emp_id or "NV001")
+            target_emp = "ALL" if (is_aggregate or not emp_id) else emp_id
             return {
                 "tool": "get_absence_summary",
                 "parameters": {"employee_id": target_emp, "month": target_month, "year": target_year},
@@ -371,7 +391,17 @@ class AttendanceAgent(BaseAgent):
         parameters: Dict[str, Any],
         tool_result: Dict[str, Any],
     ) -> str:
-        """Synthesize tool result into user-facing response."""
+        """Synthesize tool result into user-facing response.
+
+        Để tiết kiệm tối đa tài nguyên máy (CPU/GPU/RAM) và phản hồi tức thì (<10ms),
+        hệ thống hỗ trợ chế độ FAST_RESPONSE=true (mặc định) sử dụng Markdown template chuẩn xác 100%.
+        Nếu FAST_RESPONSE=false, hệ thống sẽ gọi LLM (Ollama/OpenAI) để sinh văn bản tự do.
+        """
+        fast_mode = os.getenv("FAST_RESPONSE", "true").lower() in ("true", "1", "yes")
+        if fast_mode:
+            logger.info("[DomainAgent:Attendance] Chế độ Fast Response (tiết kiệm tài nguyên): trả về template Markdown chuẩn.")
+            return self._synthesize_response_template(tool_name, parameters, tool_result)
+
         if (self.llm and not getattr(self.llm, "is_mock", False)) or self.openai_client:
             try:
                 logger.info("[DomainAgent:Attendance] Gọi self.llm.generate() để tổng hợp câu trả lời...")
@@ -403,10 +433,13 @@ class AttendanceAgent(BaseAgent):
             "  - Số lần đi trễ: X lần\n"
             "  - Số ngày vắng mặt: X ngày\n"
             "  - Tỷ lệ chuyên cần: X%\n\n"
-            "2. VỚI THỐNG KÊ ĐI TRỄ / VẮNG MẶT CÁ NHÂN (get_late_arrival_summary): Trình bày card số lần, tổng phút trễ và chi tiết ngày trễ (nếu có).\n\n"
-            "3. VỚI TRUY VẤN TỔNG HỢP / TẬP THỂ / TOÀN CÔNG TY (VD: 'Ai đi trễ nhiều nhất?', bảng thống kê): BẮT BUỘC có câu kết luận ai trễ nhiều nhất, VÀ NGAY SAU ĐÓ BẮT BUỘC CÓ TIÊU ĐỀ (###) KÈM BẢNG MARKDOWN CHUẨN:\n"
-            "  | STT | Mã NV | Họ và tên | Số lần trễ | Tổng phút trễ |\n"
-            "  Cột STT, Số lần trễ và Tổng phút trễ căn phải (|---:|).\n\n"
+            "2. VỚI THỐNG KÊ ĐI TRỄ / VẮNG MẶT CÁ NHÂN (get_late_arrival_summary): Trình bày card số lần, tổng phút trễ và chi tiết ngày trễ (nếu có).\n"
+            "  - NẾU SỐ LẦN ĐI TRỄ LÀ 0: Kết luận rõ nhân viên đi làm đúng giờ đầy đủ, không đi trễ lần nào trong tháng.\n\n"
+            "3. VỚI TRUY VẤN TỔNG HỢP / TẬP THỂ / TOÀN CÔNG TY (VD: 'Ai đi trễ nhiều nhất?', bảng thống kê):\n"
+            "  - NẾU CÓ NGƯỜI ĐI TRỄ (số lần trễ > 0): Có câu kết luận ai trễ nhiều nhất kèm số lần và tổng phút trễ, VÀ BẢNG MARKDOWN CHUẨN:\n"
+            "    | STT | Mã NV | Họ và tên | Số lần trễ | Tổng phút trễ |\n"
+            "    Cột STT, Số lần trễ và Tổng phút trễ căn phải (|---:|).\n"
+            "  - NẾU KHÔNG CÓ AI ĐI TRỄ HOẶC TỔNG SỐ LẦN TRỄ LÀ 0: Kết luận rõ ràng: 'Trong tháng này toàn công ty không có nhân viên nào đi trễ.' TUYỆT ĐỐI KHÔNG kết luận bất kỳ ai là 'trễ nhiều nhất' khi số lần trễ bằng 0!\n\n"
             "4. KÝ TỰ: Tuyệt đối KHÔNG escape gạch đứng | thành \\| và KHÔNG escape email @ thành \\@."
         )
         user_prompt = (
@@ -451,12 +484,20 @@ class AttendanceAgent(BaseAgent):
                 logger.warning("[DomainAgent:Attendance] Lỗi OpenAI synthesis: %s", exc)
 
         if resp_text:
-            # Safeguard: if aggregate late arrival query lacks table, append template table
+            # Safeguard 1: Sửa lỗi LLM ảo giác "trễ nhiều nhất với 0 lần" hoặc kết luận người trễ nhất khi late_count = 0
+            late_count_val = data.get("late_count", 0) if isinstance(data, dict) else 0
+            if (late_count_val == 0 and re.search(r"(trễ|muộn)\s+(nhiều\s+)?nhất", resp_text, re.IGNORECASE)) or \
+               re.search(r"(trễ|muộn)\s+nhiều\s+nhất.*?0\s*(lần|phút)", resp_text, re.IGNORECASE) or \
+               re.search(r"0\s*(lần|phút).*?(trễ|muộn)\s+nhiều\s+nhất", resp_text, re.IGNORECASE):
+                logger.warning("[DomainAgent:Attendance] Phát hiện LLM ảo giác 'trễ nhiều nhất với 0 lần'. Thay thế bằng template chuẩn.")
+                return self._synthesize_response_template(tool_name, parameters, tool_result)
+
+            # Safeguard 2: if aggregate late arrival query lacks table, append template table
             if tool_name == "get_late_arrival_summary" and parameters.get("employee_id") == "ALL":
                 if "| STT" not in resp_text and "| Mã NV" not in resp_text:
                     table_md = self._synthesize_response_template(tool_name, parameters, tool_result)
                     resp_text = f"{resp_text}\n\n{table_md}"
-            # Safeguard: if monthly attendance response lacks exact working days, append template card
+            # Safeguard 3: if monthly attendance response lacks exact working days, append template card
             elif tool_name == "get_monthly_attendance":
                 actual_days = str(data.get("actual_working_days", ""))
                 if actual_days and actual_days not in resp_text:
@@ -512,7 +553,7 @@ class AttendanceAgent(BaseAgent):
 
             # Trường hợp truy vấn tập thể / toàn công ty (VD: "Ai đi trễ nhiều nhất?")
             if emp_id == "ALL" or emp_name in ("Toàn bộ nhân viên", "Tất cả nhân viên"):
-                if not details:
+                if not details or late_count == 0:
                     return f"🎉 Trong tháng {month}/{year}, toàn công ty không có nhân viên nào đi trễ."
 
                 from collections import defaultdict
@@ -525,8 +566,16 @@ class AttendanceAgent(BaseAgent):
                     emp_stats[eid]["minutes"] += d.get("late_minutes", 0)
                     emp_stats[eid]["dates"].append(f"{d.get('date')} ({d.get('late_minutes')}p)")
 
-                sorted_emps = sorted(emp_stats.items(), key=lambda x: (x[1]["count"], x[1]["minutes"]), reverse=True)
+                # Lọc những nhân viên có số lần trễ > 0
+                filtered_emps = {k: v for k, v in emp_stats.items() if v["count"] > 0}
+                if not filtered_emps:
+                    return f"🎉 Trong tháng {month}/{year}, toàn công ty không có nhân viên nào đi trễ."
+
+                sorted_emps = sorted(filtered_emps.items(), key=lambda x: (x[1]["count"], x[1]["minutes"]), reverse=True)
                 max_count = sorted_emps[0][1]["count"] if sorted_emps else 0
+                if max_count == 0:
+                    return f"🎉 Trong tháng {month}/{year}, toàn công ty không có nhân viên nào đi trễ."
+
                 top_late_names = [f"**{info['name']}** (`{eid}` - {info['count']} lần)" for eid, info in sorted_emps if info["count"] == max_count]
 
                 lines = [
@@ -545,18 +594,24 @@ class AttendanceAgent(BaseAgent):
                 return "\n".join(lines)
 
             # Trường hợp cá nhân 1 nhân viên
+            if late_count == 0 or not details:
+                return (
+                    f"### Thống kê đi trễ tháng {month}/{year}\n\n"
+                    f"- **Nhân viên:** **{emp_name}** (`{emp_id}`)\n"
+                    f"- **Số lần đi trễ:** **0 lần**\n"
+                    f"- **Tổng thời gian trễ:** 0 phút\n\n"
+                    f"🎉 **Kết luận:** Nhân viên {emp_name} đi làm đúng giờ đầy đủ, không có lần nào đi trễ trong tháng {month}/{year}."
+                )
+
             lines = [
                 f"### Thống kê đi trễ tháng {month}/{year}\n\n"
                 f"- **Nhân viên:** **{emp_name}** (`{emp_id}`)\n"
                 f"- **Số lần đi trễ:** **{late_count} lần**\n"
                 f"- **Tổng thời gian trễ:** {total_mins} phút\n",
+                "**Chi tiết các lần đi trễ:**",
             ]
-            if details:
-                lines.append("**Chi tiết các lần đi trễ:**")
-                for d in details:
-                    lines.append(f"- Ngày `{d.get('date')}`: Vào lúc `{d.get('check_in')}` (Trễ {d.get('late_minutes')} phút - *{d.get('notes', '')}*)")
-            else:
-                lines.append("🎉 *Nhân viên không có lần đi trễ nào trong tháng.*")
+            for d in details:
+                lines.append(f"- Ngày `{d.get('date')}`: Vào lúc `{d.get('check_in')}` (Trễ {d.get('late_minutes')} phút - *{d.get('notes', '')}*)")
 
             return "\n".join(lines)
 

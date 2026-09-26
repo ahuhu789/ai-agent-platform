@@ -210,9 +210,16 @@ class MockAttendanceSupport(AttendanceFunctionSupport):
         ]
 
         total_minutes = sum(r.get("late_minutes", 0) for r in late_records)
-        emp_name = late_records[0].get("employee_name") if late_records else "Nhân viên"
-        if emp_name == "Nhân viên" and (emp_id, m, y) in self.monthly_map:
+        emp_name = late_records[0].get("employee_name") if late_records else None
+        if not emp_name:
+            for r in self.records:
+                if r.get("employee_id") == emp_id and r.get("employee_name"):
+                    emp_name = r.get("employee_name")
+                    break
+        if not emp_name and (emp_id, m, y) in self.monthly_map:
             emp_name = self.monthly_map[(emp_id, m, y)]["employee_name"]
+        if not emp_name:
+            emp_name = f"Nhân viên {emp_id}"
 
         return {
             "employee_id": emp_id,
