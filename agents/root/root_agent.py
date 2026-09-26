@@ -28,11 +28,13 @@ INTENT_KEYWORDS = {
     ],
     "attendance": [
         "đi làm", "đi trễ", "đi muộn", "muộn giờ", "vắng mặt", "chuyên cần",
-        "chấm công", "nghỉ phép", "nghỉ không phép", "ngày công", "số ngày làm",
+        "chấm công", "nghỉ phép", "nghỉ có phép", "nghỉ không phép", "có phép", "không phép",
+        "xin nghỉ", "nghỉ ốm", "nghỉ năm", "nghỉ thai sản", "ngày công", "số ngày làm",
         "lịch sử chấm công", "lịch sử chuyên cần", "giờ vào", "giờ ra",
         "check in", "check out", "tỷ lệ đi làm", "ai đi trễ", "ai vắng mặt",
         "ai đi làm", "ai nghỉ phép", "ai muộn", "trễ nhiều nhất", "muộn nhiều nhất",
-        "vắng nhiều nhất", "nghỉ nhiều nhất",
+        "vắng nhiều nhất", "nghỉ nhiều nhất", "thống kê chuyên cần", "báo cáo chuyên cần",
+        "tình hình chuyên cần", "phút trễ", "số phút trễ", "số lần trễ", "trễ", "muộn",
     ],
     "employee": [
         "nhân viên", "phòng ban", "hồ sơ nhân sự", "hồ sơ nhân viên", "nhân sự",

@@ -72,20 +72,48 @@ class MockAttendanceSupport(AttendanceFunctionSupport):
         self.monthly_map = dict(monthly_map if monthly_map is not None else MOCK_MONTHLY_ATTENDANCE)
 
     def _resolve_employee_id(self, employee_id_or_name: str) -> str:
-        """Resolve employee ID or name (like 'Nhân viên A' -> 'NV001')."""
-        target = (employee_id_or_name or "").strip().upper()
-        if target.startswith("NV"):
-            return target
-        if target in ("ALL", "HÔM NAY", "HOM NAY", "AI", "TOÀN BỘ", "TOAN BO"):
+        """Resolve employee ID or name (like 'Nhân viên A' -> 'NV001', 'Đặng Mai K' -> 'NV010')."""
+        target = (employee_id_or_name or "").strip()
+        if not target:
+            return ""
+        if target.upper().startswith("NV"):
+            return target.upper()
+        if target.upper() in ("ALL", "HÔM NAY", "HOM NAY", "AI", "TOÀN BỘ", "TOAN BO", "TẤT CẢ", "TAT CA", "TOÀN CÔNG TY", "TOAN CONG TY"):
             return "ALL"
-        # Check by name in records
-        target_lower = employee_id_or_name.strip().lower()
-        if target_lower in ("a", "nhân viên a", "nguyễn văn a", "nv a") or "nguyễn văn a" in target_lower:
-            return "NV001"
-        if target_lower in ("b", "nhân viên b", "trần thị b", "nv b") or "trần thị b" in target_lower:
-            return "NV002"
-        if target_lower in ("c", "nhân viên c", "lê hoàng c", "nv c") or "lê hoàng c" in target_lower:
-            return "NV003"
+
+        target_lower = target.lower()
+
+        # Letter lookup (A -> NV001, B -> NV002, ..., K -> NV010, L -> NV011)
+        letter_map = {
+            "a": "NV001", "b": "NV002", "c": "NV003", "d": "NV004",
+            "e": "NV005", "f": "NV006", "g": "NV007", "h": "NV008",
+            "i": "NV009", "k": "NV010", "l": "NV011"
+        }
+        for prefix in ("nhân viên ", "nhan vien ", "nv ", "nv"):
+            if target_lower.startswith(prefix):
+                suffix = target_lower[len(prefix):].strip()
+                if suffix in letter_map:
+                    return letter_map[suffix]
+
+        if target_lower in letter_map:
+            return letter_map[target_lower]
+
+        # Match full or partial name against records & monthly_map
+        for r in self.records:
+            name = (r.get("employee_name") or "").lower()
+            if name and (name in target_lower or target_lower in name):
+                return r.get("employee_id", target)
+
+        for (eid, _, _), m_data in self.monthly_map.items():
+            name = (m_data.get("employee_name") or "").lower()
+            if name and (name in target_lower or target_lower in name):
+                return eid
+
+        # Check ending letter (e.g. "nhân viên đặng mai k" ends with "k")
+        words = target_lower.split()
+        if words and words[-1] in letter_map:
+            return letter_map[words[-1]]
+
         return target
 
     def get_attendance_history(
@@ -218,8 +246,8 @@ class MockAttendanceSupport(AttendanceFunctionSupport):
                 "month": m,
                 "year": y,
                 "absent_days": len(absent_records),
-                "leave_with_permission": len(absent_records),
-                "leave_without_permission": 0,
+                "leave_with_permission": sum(1 for r in absent_records if "không phép" not in (r.get("notes") or "").lower()),
+                "leave_without_permission": sum(1 for r in absent_records if "không phép" in (r.get("notes") or "").lower()),
                 "details": [dict(r) for r in absent_records],
             }
 
@@ -230,18 +258,37 @@ class MockAttendanceSupport(AttendanceFunctionSupport):
             and r.get("date", "").startswith(f"{y:04d}-{m:02d}")
         ]
 
-        emp_name = absent_records[0].get("employee_name") if absent_records else "Nhân viên"
-        if emp_name == "Nhân viên" and (emp_id, m, y) in self.monthly_map:
+        emp_name = None
+        if absent_records:
+            emp_name = absent_records[0].get("employee_name")
+        if not emp_name:
+            for r in self.records:
+                if r.get("employee_id") == emp_id and r.get("employee_name"):
+                    emp_name = r.get("employee_name")
+                    break
+        if not emp_name and (emp_id, m, y) in self.monthly_map:
             emp_name = self.monthly_map[(emp_id, m, y)]["employee_name"]
+        if not emp_name:
+            emp_name = f"Nhân viên {emp_id}"
+
+        absent_count = len(absent_records)
+        if absent_count == 0 and (emp_id, m, y) in self.monthly_map:
+            absent_count = self.monthly_map[(emp_id, m, y)].get("absent_count", 0)
+
+        with_perm = sum(1 for r in absent_records if "không phép" not in (r.get("notes") or "").lower())
+        without_perm = sum(1 for r in absent_records if "không phép" in (r.get("notes") or "").lower())
+        if absent_count > 0 and len(absent_records) == 0:
+            with_perm = absent_count
+            without_perm = 0
 
         return {
             "employee_id": emp_id,
             "employee_name": emp_name,
             "month": m,
             "year": y,
-            "absent_days": len(absent_records),
-            "leave_with_permission": len(absent_records),
-            "leave_without_permission": 0,
+            "absent_days": absent_count,
+            "leave_with_permission": with_perm,
+            "leave_without_permission": without_perm,
             "details": [dict(r) for r in absent_records],
         }
 
@@ -253,6 +300,20 @@ class MockAttendanceSupport(AttendanceFunctionSupport):
     ) -> Dict[str, Any]:
         m = month or 9
         y = year or 2026
+        if m == 8:
+            return {
+                "month": 8,
+                "year": y,
+                "total_employees": 10,
+                "average_attendance_rate": 98.5,
+                "total_late_incidents": 2,
+                "total_absent_days": 1,
+                "by_department": {
+                    "Phòng Kỹ thuật": {"attendance_rate": 98.0, "late_incidents": 1, "absent_days": 1},
+                    "Phòng Nhân sự": {"attendance_rate": 100.0, "late_incidents": 0, "absent_days": 0},
+                    "Phòng Kế toán": {"attendance_rate": 99.0, "late_incidents": 1, "absent_days": 0},
+                },
+            }
         return {
             "month": m,
             "year": y,
@@ -261,9 +322,9 @@ class MockAttendanceSupport(AttendanceFunctionSupport):
             "total_late_incidents": 4,
             "total_absent_days": 2,
             "by_department": {
-                "Phòng Kỹ thuật": {"attendance_rate": 96.2, "late_incidents": 2},
-                "Phòng Nhân sự": {"attendance_rate": 94.5, "late_incidents": 1},
-                "Phòng Kế toán": {"attendance_rate": 100.0, "late_incidents": 0},
+                "Phòng Kỹ thuật": {"attendance_rate": 96.2, "late_incidents": 2, "absent_days": 1},
+                "Phòng Nhân sự": {"attendance_rate": 94.5, "late_incidents": 1, "absent_days": 1},
+                "Phòng Kế toán": {"attendance_rate": 100.0, "late_incidents": 0, "absent_days": 0},
             },
         }
 
