@@ -332,14 +332,16 @@ function appendMessageToDOM(role, content, metadata = null) {
 
     const routedBy = metadata.routed_by || "root_agent";
     const agent = metadata.agent || metadata.source || metadata.intent || "hiring";
-    const tool = metadata.tool_used;
-    const badgeClass = `badge-${agent}`;
+    const latencyBadge = (metadata.latency_ms !== undefined) 
+      ? `<span class="badge-arrow">➔</span><span class="trace-badge badge-latency" title="Thời gian phản hồi hệ thống">⚡ ${metadata.latency_ms}ms</span>` 
+      : "";
 
     traceContainer.innerHTML = `
       <span class="trace-badge badge-root">🧭 ${routedBy}</span>
       <span class="badge-arrow">➔</span>
       <span class="trace-badge ${badgeClass}">🤖 ${agent}_agent</span>
       ${tool ? `<span class="badge-arrow">➔</span><span class="trace-badge badge-tool">⚙️ ${tool}</span>` : ""}
+      ${latencyBadge}
     `;
     wrapper.appendChild(traceContainer);
   }
@@ -413,6 +415,7 @@ async function handleSendMessage() {
       conversation_id: currentConversationId,
     };
 
+    const startTime = performance.now();
     const res = await fetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -420,7 +423,13 @@ async function handleSendMessage() {
     });
 
     const data = await res.json();
+    const durationMs = Math.round(performance.now() - startTime);
     loadingRow.remove();
+
+    if (!data.metadata) {
+      data.metadata = {};
+    }
+    data.metadata.latency_ms = durationMs;
 
     if (data.conversation_id) {
       currentConversationId = data.conversation_id;
