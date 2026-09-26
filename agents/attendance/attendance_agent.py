@@ -456,6 +456,12 @@ class AttendanceAgent(BaseAgent):
                 if "| STT" not in resp_text and "| Mã NV" not in resp_text:
                     table_md = self._synthesize_response_template(tool_name, parameters, tool_result)
                     resp_text = f"{resp_text}\n\n{table_md}"
+            # Safeguard: if monthly attendance response lacks exact working days, append template card
+            elif tool_name == "get_monthly_attendance":
+                actual_days = str(data.get("actual_working_days", ""))
+                if actual_days and actual_days not in resp_text:
+                    card_md = self._synthesize_response_template(tool_name, parameters, tool_result)
+                    resp_text = f"{card_md}\n\n{resp_text}"
             return resp_text
 
         return self._synthesize_response_template(tool_name, parameters, tool_result)
