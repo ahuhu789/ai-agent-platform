@@ -8,6 +8,56 @@ import pytest
 from shared.clients.mcp_client import MCPConnectionError, MultiServerMCPClient
 
 
+class FakeTool:
+    def __init__(self, name="tool", description="description", input_schema=None):
+        self.name = name
+        self.description = description
+        self.inputSchema = {} if input_schema is None else input_schema
+
+
+class FakeTools:
+    def __init__(self, tools, next_cursor=None):
+        self.tools = tools
+        self.nextCursor = next_cursor
+
+
+class FakeCallResult:
+    def __init__(self, *, is_error=False, content=None):
+        self.isError = is_error
+        self.content = content or []
+
+
+class FakeSession:
+    def __init__(self, pages=None, call_result=None):
+        self.pages = list(pages or [])
+        self.call_result = call_result or FakeCallResult()
+        self.list_calls = []
+        self.call_calls = []
+
+    async def list_tools(self, cursor=None):
+        self.list_calls.append(cursor)
+        response = self.pages.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+    async def call_tool(self, name, arguments):
+        self.call_calls.append((name, arguments))
+        if isinstance(self.call_result, BaseException):
+            raise self.call_result
+        return self.call_result
+
+
+def connected_client(session, monkeypatch=None, **environment):
+    if monkeypatch:
+        for name, value in environment.items():
+            monkeypatch.setenv(name, str(value))
+    client = MultiServerMCPClient({"hiring": {}})
+    client.sessions["hiring"] = session
+    client.server_status["hiring"] = "connected"
+    return client
+
+
 TIMEOUT_ENV = {
     "MCP_CONNECT_TIMEOUT_SECONDS": ("connect_timeout", 10),
     "MCP_OPERATION_TIMEOUT_SECONDS": ("operation_timeout", 30),
@@ -292,3 +342,221 @@ def test_configured_bridge_deadlines(monkeypatch):
     client.call_tool_sync("hiring", "search_candidates", {})
 
     assert deadlines == [9, 4, 4, 4]
+
+
+def test_list_tools_follows_pages_and_caches():
+    async def exercise():
+        session = FakeSession([
+            FakeTools([FakeTool("one")], next_cursor="page-2"),
+            FakeTools([FakeTool("two")]),
+        ])
+        client = connected_client(session)
+
+        assert [tool.name for tool in await client.list_tools("hiring")] == [
+            "one",
+            "two",
+        ]
+        assert [tool.name for tool in await client.list_tools("hiring")] == [
+            "one",
+            "two",
+        ]
+        assert session.list_calls == [None, "page-2"]
+
+    asyncio.run(exercise())
+
+
+def test_list_tools_requires_connected_server():
+    client = MultiServerMCPClient({"hiring": {}})
+
+    with pytest.raises(MCPConnectionError, match="hiring"):
+        asyncio.run(client.list_tools("hiring"))
+
+
+def test_list_tools_force_refreshes_cached_discovery():
+    async def exercise():
+        session = FakeSession([
+            FakeTools([FakeTool("one")]),
+            FakeTools([FakeTool("two")]),
+        ])
+        client = connected_client(session)
+
+        assert [tool.name for tool in await client.list_tools("hiring")] == ["one"]
+        assert [
+            tool.name for tool in await client.list_tools("hiring", force=True)
+        ] == ["two"]
+        assert session.list_calls == [None, None]
+
+    asyncio.run(exercise())
+
+
+def test_failed_refresh_preserves_but_does_not_return_stale_cache():
+    async def exercise():
+        session = FakeSession([
+            FakeTools([FakeTool("one")]),
+            RuntimeError("refresh failed"),
+        ])
+        client = connected_client(session)
+
+        cached = await client.list_tools("hiring")
+        with pytest.raises(MCPConnectionError, match="hiring"):
+            await client.list_tools("hiring", force=True)
+
+        assert client.server_status["hiring"] == "failed"
+        assert await client.list_tools("hiring") == cached
+        assert session.list_calls == [None, None]
+
+    asyncio.run(exercise())
+
+
+def test_expired_discovery_cache_is_refreshed(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("shared.cache.in_memory_cache.time.time", lambda: clock[0])
+
+    async def exercise():
+        session = FakeSession([
+            FakeTools([FakeTool("one")]),
+            FakeTools([FakeTool("two")]),
+        ])
+        client = connected_client(
+            session,
+            monkeypatch,
+            MCP_DISCOVERY_TTL_SECONDS=5,
+        )
+
+        assert [tool.name for tool in await client.list_tools("hiring")] == ["one"]
+        clock[0] += 6
+        assert [tool.name for tool in await client.list_tools("hiring")] == ["two"]
+        assert session.list_calls == [None, None]
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        FakeTool(""),
+        FakeTool(1),
+        FakeTool(description=1),
+        FakeTool(input_schema=[]),
+    ],
+)
+def test_invalid_tool_definition_is_rejected_and_not_cached(tool):
+    async def exercise():
+        session = FakeSession([
+            FakeTools([tool]),
+            FakeTools([FakeTool("valid")]),
+        ])
+        client = connected_client(session)
+
+        with pytest.raises(MCPConnectionError, match="hiring"):
+            await client.list_tools("hiring")
+
+        assert [tool.name for tool in await client.list_tools("hiring")] == [
+            "valid"
+        ]
+        assert session.list_calls == [None, None]
+
+    asyncio.run(exercise())
+
+
+def test_list_tools_timeout_marks_server_failed(monkeypatch):
+    async def exercise():
+        session = FakeSession()
+
+        async def hang(cursor=None):
+            await asyncio.Future()
+
+        session.list_tools = hang
+        client = connected_client(
+            session,
+            monkeypatch,
+            MCP_OPERATION_TIMEOUT_SECONDS=0.01,
+        )
+
+        with pytest.raises(MCPConnectionError, match="hiring"):
+            await client.list_tools("hiring")
+        assert client.server_status["hiring"] == "failed"
+
+    asyncio.run(exercise())
+
+
+def test_call_tool_timeout_returns_failure_and_marks_server_failed(monkeypatch):
+    async def exercise():
+        session = FakeSession()
+
+        async def hang(_name, _arguments):
+            await asyncio.Future()
+
+        session.call_tool = hang
+        client = connected_client(
+            session,
+            monkeypatch,
+            MCP_OPERATION_TIMEOUT_SECONDS=0.01,
+        )
+
+        result = await client.call_tool("hiring", "search_candidates", {})
+
+        assert not result.success
+        assert result.error == "MCP operation timed out: hiring.search_candidates"
+        assert result.metadata == {
+            "server": "hiring",
+            "tool": "search_candidates",
+        }
+        assert client.server_status["hiring"] == "failed"
+
+    asyncio.run(exercise())
+
+
+def test_tool_level_error_leaves_server_connected():
+    async def exercise():
+        client = connected_client(FakeSession(call_result=FakeCallResult(is_error=True)))
+
+        result = await client.call_tool("hiring", "search_candidates", {})
+
+        assert not result.success
+        assert client.server_status["hiring"] == "connected"
+
+    asyncio.run(exercise())
+
+
+def test_sync_operation_timeout_contracts(monkeypatch):
+    client = MultiServerMCPClient({"hiring": {}})
+    client._loop = object()
+    futures = []
+
+    class Future:
+        def __init__(self):
+            self.cancelled = False
+            self.timeout = None
+
+        def result(self, timeout):
+            self.timeout = timeout
+            raise concurrent.futures.TimeoutError
+
+        def cancel(self):
+            self.cancelled = True
+
+    def submit(coro, _loop):
+        coro.close()
+        future = Future()
+        futures.append(future)
+        return future
+
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", submit)
+
+    with pytest.raises(MCPConnectionError, match="hiring"):
+        client.list_tools_sync("hiring")
+    result = client.call_tool_sync("hiring", "search_candidates", {})
+
+    assert [future.timeout for future in futures] == [
+        client.operation_timeout + 1,
+        client.operation_timeout + 1,
+    ]
+    assert all(future.cancelled for future in futures)
+    assert not result.success
+    assert result.error == "MCP operation timed out: hiring.search_candidates"
+    assert result.metadata == {
+        "server": "hiring",
+        "tool": "search_candidates",
+    }
+    assert client.server_status["hiring"] == "failed"

@@ -18,6 +18,7 @@ from mcp.client.session import ClientSession
 from mcp.client.stdio import stdio_client, StdioServerParameters
 
 from shared.abstractions.mcp_client import BaseMCPClient, ToolDefinition, MCPToolResult
+from shared.cache import InMemoryCache
 
 logger = logging.getLogger("mcp.client")
 
@@ -57,6 +58,7 @@ class MultiServerMCPClient(BaseMCPClient):
             os.getenv("MCP_DISCOVERY_TTL_SECONDS", 60),
             "MCP_DISCOVERY_TTL_SECONDS",
         )
+        self._discovery_cache = InMemoryCache()
         self.server_status = {
             name: "disconnected" for name in self.server_configs
         }
@@ -218,27 +220,71 @@ class MultiServerMCPClient(BaseMCPClient):
 
     # ------------------ Thực thi Tool (BaseMCPClient) ------------------
 
-    async def list_tools(self, server_name: str) -> List[ToolDefinition]:
+    async def list_tools(
+        self, server_name: str, force: bool = False
+    ) -> List[ToolDefinition]:
         """Lấy danh sách các tool từ MCP Server chỉ định."""
+        cache_key = f"mcp:tools:{server_name}"
+        if not force:
+            cached = self._discovery_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         session = self.sessions.get(server_name)
         if not session:
-            logger.warning("Server '%s' chưa được kết nối", server_name)
-            return []
+            raise MCPConnectionError(
+                f"MCP server '{server_name}' is not connected for tool discovery"
+            )
 
         try:
-            response = await session.list_tools()
             results = []
-            for t in response.tools:
-                schema = getattr(t, "inputSchema", getattr(t, "input_schema", {}))
-                results.append(ToolDefinition(
-                    name=t.name,
-                    description=t.description or "",
-                    input_schema=schema,
-                ))
+            cursor = None
+            while True:
+                response = await asyncio.wait_for(
+                    session.list_tools(cursor=cursor),
+                    timeout=self.operation_timeout,
+                )
+                for tool in response.tools:
+                    name = getattr(tool, "name", None)
+                    description = getattr(tool, "description", None)
+                    schema = getattr(tool, "inputSchema", None)
+                    if schema is None:
+                        schema = getattr(tool, "input_schema", None)
+                    if (
+                        not isinstance(name, str)
+                        or not name
+                        or (description is not None and not isinstance(description, str))
+                        or not isinstance(schema, dict)
+                    ):
+                        raise MCPConnectionError(
+                            f"Invalid tool definition from MCP server '{server_name}'"
+                        )
+                    results.append(ToolDefinition(
+                        name=name,
+                        description=description or "",
+                        input_schema=schema,
+                    ))
+                cursor = getattr(response, "nextCursor", None) or getattr(
+                    response, "next_cursor", None
+                )
+                if not cursor:
+                    break
+            self._discovery_cache.set(cache_key, results, self.discovery_ttl)
             return results
+        except asyncio.TimeoutError as exc:
+            self.server_status[server_name] = "failed"
+            raise MCPConnectionError(
+                f"MCP operation timed out: {server_name}.list_tools"
+            ) from exc
+        except MCPConnectionError:
+            self.server_status[server_name] = "failed"
+            raise
         except Exception as e:
+            self.server_status[server_name] = "failed"
             logger.error("Lỗi khi lấy danh sách tools từ %s: %s", server_name, e)
-            return []
+            raise MCPConnectionError(
+                f"MCP tool discovery failed: {server_name}.list_tools: {e}"
+            ) from e
 
     async def call_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any]) -> MCPToolResult:
         """Thực thi một tool trên MCP Server chỉ định (Async)."""
@@ -251,7 +297,10 @@ class MultiServerMCPClient(BaseMCPClient):
             )
 
         try:
-            response = await session.call_tool(tool_name, arguments or {})
+            response = await asyncio.wait_for(
+                session.call_tool(tool_name, arguments or {}),
+                timeout=self.operation_timeout,
+            )
 
             # Tổng hợp nội dung trả về từ CallToolResult
             text_parts = []
@@ -271,7 +320,7 @@ class MultiServerMCPClient(BaseMCPClient):
                             success=bool(data.get("success", False)),
                             data=data.get("data"),
                             error=data.get("error"),
-                            metadata={"server": server_name, **data.get("metadata", {})},
+                            metadata={"server": server_name, **(data.get("metadata") or {})},
                         )
                     return MCPToolResult(
                         success=not getattr(response, "isError", False),
@@ -287,7 +336,15 @@ class MultiServerMCPClient(BaseMCPClient):
                 metadata={"server": server_name},
             )
 
+        except asyncio.TimeoutError:
+            self.server_status[server_name] = "failed"
+            return MCPToolResult(
+                success=False,
+                error=f"MCP operation timed out: {server_name}.{tool_name}",
+                metadata={"server": server_name, "tool": tool_name},
+            )
         except Exception as e:
+            self.server_status[server_name] = "failed"
             logger.error("Lỗi thực thi tool '%s' trên server '%s': %s", tool_name, server_name, e)
             return MCPToolResult(
                 success=False,
@@ -297,15 +354,32 @@ class MultiServerMCPClient(BaseMCPClient):
 
     # ------------------ Giao diện Đồng bộ (Sync) ------------------
 
-    def list_tools_sync(self, server_name: str) -> List[ToolDefinition]:
+    def list_tools_sync(
+        self, server_name: str, force: bool = False
+    ) -> List[ToolDefinition]:
         """Lấy danh sách tools (gọi đồng bộ)."""
-        return self._run_coroutine(
-            self.list_tools(server_name), self.operation_timeout + 1
-        )
+        try:
+            return self._run_coroutine(
+                self.list_tools(server_name, force=force),
+                self.operation_timeout + 1,
+            )
+        except concurrent.futures.TimeoutError as exc:
+            self.server_status[server_name] = "failed"
+            raise MCPConnectionError(
+                f"MCP operation timed out: {server_name}.list_tools"
+            ) from exc
 
     def call_tool_sync(self, server_name: str, tool_name: str, arguments: Dict[str, Any]) -> MCPToolResult:
         """Thực thi tool (gọi đồng bộ)."""
-        return self._run_coroutine(
-            self.call_tool(server_name, tool_name, arguments),
-            self.operation_timeout + 1,
-        )
+        try:
+            return self._run_coroutine(
+                self.call_tool(server_name, tool_name, arguments),
+                self.operation_timeout + 1,
+            )
+        except concurrent.futures.TimeoutError:
+            self.server_status[server_name] = "failed"
+            return MCPToolResult(
+                success=False,
+                error=f"MCP operation timed out: {server_name}.{tool_name}",
+                metadata={"server": server_name, "tool": tool_name},
+            )
