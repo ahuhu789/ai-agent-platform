@@ -23,7 +23,7 @@ logger = setup_logger("fme.agent_setup")
 
 
 def setup_mcp_client() -> MultiServerMCPClient:
-    """Khởi tạo và kết nối MCP Client tới 3 MCP Server phân hệ."""
+    """Khởi tạo MCP Client cho 3 MCP Server phân hệ."""
     python_exe = sys.executable
     configs = {
         "hiring": {
@@ -39,12 +39,7 @@ def setup_mcp_client() -> MultiServerMCPClient:
             "args": ["-m", "mcp_servers.employee.server", "--transport", "stdio"],
         },
     }
-    client = MultiServerMCPClient(configs)
-    try:
-        client.connect_all()
-    except Exception as e:
-        logger.warning("[AgentSetup] Could not connect to MCP servers at startup (%s)", e)
-    return client
+    return MultiServerMCPClient(configs)
 
 
 def setup_llm() -> Optional[BaseLLM]:

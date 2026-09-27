@@ -2,6 +2,7 @@
 Unit tests cho Settings API (/settings) và tính năng tạo/cập nhật file .env từ giao diện.
 """
 from pathlib import Path
+import os
 import pytest
 from fastapi.testclient import TestClient
 
@@ -11,22 +12,27 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT_DIR / ".env"
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def client():
-    return TestClient(app)
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 @pytest.fixture(autouse=True)
 def preserve_env_file():
     """Lưu lại nội dung .env trước test và khôi phục lại sau khi test kết thúc."""
-    original_content = None
-    if ENV_PATH.exists():
-        original_content = ENV_PATH.read_text(encoding="utf-8")
+    original_environment = dict(os.environ)
+    env_existed = ENV_PATH.exists()
+    original_content = ENV_PATH.read_text(encoding="utf-8") if env_existed else None
 
     yield
 
-    if original_content is not None:
+    os.environ.clear()
+    os.environ.update(original_environment)
+    if env_existed:
         ENV_PATH.write_text(original_content, encoding="utf-8")
+    else:
+        ENV_PATH.unlink(missing_ok=True)
 
 
 def test_get_settings(client):
@@ -200,4 +206,3 @@ def test_save_settings_auto_detect_openrouter_prefix(client):
     assert data["success"] is True
     assert data["provider"] == "openrouter"
     assert data["model"] == "deepseek/deepseek-chat"
-

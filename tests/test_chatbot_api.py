@@ -4,15 +4,43 @@ from fastapi.testclient import TestClient
 from apps.chatbot.main import app
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def client():
-    return TestClient(app)
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 def test_health_check(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_readiness_reports_server_states(client, monkeypatch):
+    from apps.chatbot.agent_setup import mcp_client
+
+    ready = client.get("/health/ready")
+    assert ready.status_code == 200
+    assert ready.json() == {
+        "status": "ready",
+        "servers": {
+            "hiring": "connected",
+            "attendance": "connected",
+            "employee": "connected",
+        },
+    }
+
+    monkeypatch.setitem(mcp_client.server_status, "hiring", "failed")
+    response = client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "not_ready",
+        "servers": {
+            "hiring": "failed",
+            "attendance": "connected",
+            "employee": "connected",
+        },
+    }
 
 
 def test_index_serves_html(client):
@@ -133,4 +161,3 @@ def test_conversations_messages_and_user_isolation(client):
 
     bob_msg_res = client.get(f"/conversations/{conv_alice}/messages?user_id=user_bob")
     assert bob_msg_res.status_code == 404
-

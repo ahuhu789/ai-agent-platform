@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import importlib
 import time
 from contextlib import asynccontextmanager
 
@@ -63,6 +64,28 @@ TIMEOUT_ENV = {
     "MCP_OPERATION_TIMEOUT_SECONDS": ("operation_timeout", 30),
     "MCP_DISCOVERY_TTL_SECONDS": ("discovery_ttl", 60),
 }
+
+
+def test_agent_setup_import_does_not_connect(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        MultiServerMCPClient,
+        "connect_all",
+        lambda self: calls.append(self),
+    )
+
+    import apps.chatbot.agent_setup as agent_setup
+
+    original_state = {
+        name: getattr(agent_setup, name)
+        for name in ("mcp_client", "llm_provider", "root_agent")
+    }
+    try:
+        importlib.reload(agent_setup)
+    finally:
+        for name, value in original_state.items():
+            setattr(agent_setup, name, value)
+    assert calls == []
 
 
 def test_constructor_is_side_effect_free_and_uses_timeout_defaults(monkeypatch):

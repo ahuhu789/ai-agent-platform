@@ -15,12 +15,20 @@ if sys.platform == "win32":
 from dotenv import load_dotenv
 load_dotenv()
 
-from apps.chatbot.agent_setup import root_agent, llm_provider
+from apps.chatbot.agent_setup import llm_provider, mcp_client, root_agent
 from apps.chatbot.memory_store import memory_store
 from shared.abstractions.agent import AgentRequest
 
 
 def main():
+    mcp_client.connect_all()
+    try:
+        run_chat_loop()
+    finally:
+        mcp_client.disconnect_all()
+
+
+def run_chat_loop():
     print("=" * 70)
     print("AI AGENT PLATFORM - CHAT CLI INTERACTIVE")
     print("=" * 70)
