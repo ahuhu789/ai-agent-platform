@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import time
 from contextlib import asynccontextmanager
 
 import pytest
@@ -204,6 +205,36 @@ def test_disconnect_stops_loop_when_cleanup_raises(monkeypatch):
     assert client.server_status == {"hiring": "disconnected"}
 
 
+def test_disconnect_internally_times_out_and_cancels_hanging_cleanup(monkeypatch):
+    monkeypatch.setenv("MCP_OPERATION_TIMEOUT_SECONDS", "0.01")
+    client = MultiServerMCPClient({"hiring": {}})
+    client._start_loop()
+    thread = client._thread
+    client.sessions["hiring"] = object()
+    client.server_status["hiring"] = "connected"
+    finalized = []
+
+    async def hang_until_cancelled():
+        try:
+            await asyncio.Future()
+        finally:
+            finalized.append(True)
+
+    client._exit_stack.push_async_callback(hang_until_cancelled)
+
+    started = time.monotonic()
+    client.disconnect_all()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.5
+    assert finalized == [True]
+    assert client.sessions == {}
+    assert client.server_status == {"hiring": "disconnected"}
+    assert thread is not None and not thread.is_alive()
+    assert client._loop is None
+    assert client._thread is None
+
+
 def test_run_coroutine_cancels_future_on_bridge_timeout(monkeypatch):
     client = MultiServerMCPClient()
     client._loop = object()
@@ -245,9 +276,14 @@ def test_configured_bridge_deadlines(monkeypatch):
         deadlines.append(bridge_timeout)
         coro.close()
 
+    def wait_for(awaitable, *, timeout):
+        awaitable.close()
+        return asyncio.sleep(0)
+
     monkeypatch.setattr(client, "_start_loop", lambda: None)
     monkeypatch.setattr(client, "_stop_loop", lambda: None)
     monkeypatch.setattr(client, "_run_coroutine", run)
+    monkeypatch.setattr(asyncio, "wait_for", wait_for)
 
     client.connect_all()
     client._loop = object()

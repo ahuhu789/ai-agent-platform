@@ -170,7 +170,10 @@ class MultiServerMCPClient(BaseMCPClient):
                 try:
                     if self._loop is not None:
                         self._run_coroutine(
-                            self._disconnect_all_async(preserve_failed=True),
+                            asyncio.wait_for(
+                                self._disconnect_all_async(preserve_failed=True),
+                                timeout=self.operation_timeout,
+                            ),
                             self.operation_timeout + 1,
                         )
                 except Exception as exc:
@@ -196,7 +199,10 @@ class MultiServerMCPClient(BaseMCPClient):
             try:
                 if self._loop is not None:
                     self._run_coroutine(
-                        self._disconnect_all_async(),
+                        asyncio.wait_for(
+                            self._disconnect_all_async(),
+                            timeout=self.operation_timeout,
+                        ),
                         self.operation_timeout + 1,
                     )
             except Exception as exc:
