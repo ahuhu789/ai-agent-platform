@@ -89,6 +89,43 @@ def test_partial_startup_failure_cleans_everything(monkeypatch):
     }
 
 
+def test_outer_startup_timeout_cleans_partial_resources_before_stopping_loop(monkeypatch):
+    client = MultiServerMCPClient({"hiring": {}})
+    original_run = client._run_coroutine
+    cleanup_called = []
+    cleanup_deadlines = []
+    captured_thread = None
+
+    async def record_cleanup():
+        cleanup_called.append(True)
+
+    client._exit_stack.push_async_callback(record_cleanup)
+
+    def run(coro, bridge_timeout):
+        nonlocal captured_thread
+        if captured_thread is None:
+            captured_thread = client._thread
+            client.sessions["hiring"] = object()
+            client.server_status["hiring"] = "connected"
+            coro.close()
+            raise concurrent.futures.TimeoutError
+        cleanup_deadlines.append(bridge_timeout)
+        return original_run(coro, bridge_timeout)
+
+    monkeypatch.setattr(client, "_run_coroutine", run)
+
+    with pytest.raises(concurrent.futures.TimeoutError):
+        client.connect_all()
+
+    assert cleanup_called == [True]
+    assert cleanup_deadlines == [client.operation_timeout + 1]
+    assert client.sessions == {}
+    assert client.server_status == {"hiring": "disconnected"}
+    assert captured_thread is not None and not captured_thread.is_alive()
+    assert client._loop is None
+    assert client._thread is None
+
+
 def test_connection_attempts_and_failure_cleanup_have_independent_timeouts(monkeypatch):
     monkeypatch.setenv("MCP_CONNECT_TIMEOUT_SECONDS", "2")
     monkeypatch.setenv("MCP_OPERATION_TIMEOUT_SECONDS", "3")

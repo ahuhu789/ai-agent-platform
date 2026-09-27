@@ -167,7 +167,16 @@ class MultiServerMCPClient(BaseMCPClient):
             try:
                 self._run_coroutine(self._connect_all_async(), bridge_timeout)
             except Exception:
-                self._stop_loop()
+                try:
+                    if self._loop is not None:
+                        self._run_coroutine(
+                            self._disconnect_all_async(preserve_failed=True),
+                            self.operation_timeout + 1,
+                        )
+                except Exception as exc:
+                    logger.debug("Lỗi khi dọn dẹp MCP startup: %s", exc)
+                finally:
+                    self._stop_loop()
                 raise
 
     async def _disconnect_all_async(self, preserve_failed: bool = False):
