@@ -23,6 +23,7 @@ def setup_logger(name: str = "fme", level: Optional[str] = None) -> logging.Logg
     log_level_str = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
     log_level = getattr(logging, log_level_str, logging.INFO)
     logger.setLevel(log_level)
+    logger.propagate = False
 
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stderr)
