@@ -7,7 +7,9 @@ import sys
 import os
 import json
 import asyncio
+import concurrent.futures
 import logging
+import math
 import threading
 from typing import Any, Dict, List, Optional
 from contextlib import AsyncExitStack
@@ -20,6 +22,20 @@ from shared.abstractions.mcp_client import BaseMCPClient, ToolDefinition, MCPToo
 logger = logging.getLogger("mcp.client")
 
 
+class MCPConnectionError(RuntimeError):
+    """Raised when one or more MCP server connections fail."""
+
+
+def _positive_number(value: Any, name: str) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{name} must be a positive finite number") from None
+    if not math.isfinite(number) or number <= 0:
+        raise ValueError(f"{name} must be a positive finite number")
+    return number
+
+
 class MultiServerMCPClient(BaseMCPClient):
     """MCP Client kết nối nhiều MCP Server đồng thời."""
 
@@ -29,70 +45,161 @@ class MultiServerMCPClient(BaseMCPClient):
         self._exit_stack = AsyncExitStack()
         self._started = False
         self._lock = threading.Lock()
+        self.connect_timeout = _positive_number(
+            os.getenv("MCP_CONNECT_TIMEOUT_SECONDS", 10),
+            "MCP_CONNECT_TIMEOUT_SECONDS",
+        )
+        self.operation_timeout = _positive_number(
+            os.getenv("MCP_OPERATION_TIMEOUT_SECONDS", 30),
+            "MCP_OPERATION_TIMEOUT_SECONDS",
+        )
+        self.discovery_ttl = _positive_number(
+            os.getenv("MCP_DISCOVERY_TTL_SECONDS", 60),
+            "MCP_DISCOVERY_TTL_SECONDS",
+        )
+        self.server_status = {
+            name: "disconnected" for name in self.server_configs
+        }
 
-        # Dedicated background loop & thread để hỗ trợ gọi sync an toàn từ mọi thread
+        self._loop = None
+        self._thread = None
+
+    @staticmethod
+    def _run_loop(loop):
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    def _start_loop(self):
+        if self._loop is not None:
+            return
         self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="MCPClientLoop")
+        self._thread = threading.Thread(
+            target=self._run_loop,
+            args=(self._loop,),
+            daemon=True,
+            name="MCPClientLoop",
+        )
         self._thread.start()
 
-    def _run_loop(self):
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_forever()
+    def _stop_loop(self):
+        loop, thread = self._loop, self._thread
+        try:
+            if loop is not None and not loop.is_closed():
+                loop.call_soon_threadsafe(loop.stop)
+            if thread is not None and thread.is_alive():
+                thread.join()
+            if loop is not None and not loop.is_closed():
+                loop.close()
+        finally:
+            self._loop = None
+            self._thread = None
 
-    def _run_coroutine(self, coro, timeout: float = 30.0):
+    def _run_coroutine(self, coro, bridge_timeout: float):
+        if self._loop is None:
+            coro.close()
+            raise RuntimeError("MCP client event loop is not running")
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=timeout)
+        try:
+            return future.result(timeout=bridge_timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            raise
 
     # ------------------ Quản lý vòng đời kết nối ------------------
 
-    async def _connect_server_async(self, name: str, config: Dict[str, Any]) -> bool:
+    async def _connect_server_async(self, name: str, config: Dict[str, Any]) -> None:
         if name in self.sessions:
-            return True
+            return
 
         command = config.get("command", sys.executable)
         args = config.get("args", [])
         env = {**os.environ, **config.get("env", {})}
 
-        try:
-            params = StdioServerParameters(command=command, args=args, env=env)
-            read_stream, write_stream = await self._exit_stack.enter_async_context(stdio_client(params))
-            session = await self._exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
-            await session.initialize()
-            self.sessions[name] = session
-            logger.info("MCP Client kết nối thành công tới server: %s", name)
-            return True
-        except Exception as e:
-            logger.warning("MCP Client không thể kết nối tới server %s: %s", name, e)
-            return False
+        params = StdioServerParameters(command=command, args=args, env=env)
+        read_stream, write_stream = await self._exit_stack.enter_async_context(stdio_client(params))
+        session = await self._exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
+        await session.initialize()
+        self.sessions[name] = session
+        logger.info("MCP Client kết nối thành công tới server: %s", name)
 
     async def _connect_all_async(self):
+        failures = []
         for name, config in self.server_configs.items():
-            await self._connect_server_async(name, config)
+            self.server_status[name] = "connecting"
+            try:
+                await asyncio.wait_for(
+                    self._connect_server_async(name, config),
+                    timeout=self.connect_timeout,
+                )
+            except Exception as exc:
+                self.server_status[name] = "failed"
+                failures.append(name)
+                logger.warning(
+                    "MCP Client không thể kết nối tới server %s: %s", name, exc
+                )
+            else:
+                self.server_status[name] = "connected"
+
+        if failures:
+            try:
+                await asyncio.wait_for(
+                    self._disconnect_all_async(preserve_failed=True),
+                    timeout=self.operation_timeout,
+                )
+            except Exception as exc:
+                logger.debug("Lỗi khi dọn dẹp MCP startup: %s", exc)
+            raise MCPConnectionError(
+                f"Failed to connect to MCP servers: {', '.join(failures)}"
+            )
         self._started = True
 
-    def connect_all(self, timeout: float = 30.0):
+    def connect_all(self):
         """Khởi động và kết nối toàn bộ MCP Servers được cấu hình (gọi đồng bộ)."""
         with self._lock:
-            if not self._started:
-                self._run_coroutine(self._connect_all_async(), timeout=timeout)
+            if self._started:
+                return
+            self._start_loop()
+            bridge_timeout = (
+                max(1, len(self.server_configs)) * self.connect_timeout
+                + self.operation_timeout
+                + 2
+            )
+            try:
+                self._run_coroutine(self._connect_all_async(), bridge_timeout)
+            except Exception:
+                self._stop_loop()
+                raise
 
-    async def _disconnect_all_async(self):
+    async def _disconnect_all_async(self, preserve_failed: bool = False):
         try:
             await self._exit_stack.aclose()
-        except Exception as e:
-            logger.debug("Lỗi khi đóng MCP sessions: %s", e)
         finally:
             self.sessions.clear()
             self._started = False
+            self._exit_stack = AsyncExitStack()
+            for name, status in self.server_status.items():
+                if not preserve_failed or status != "failed":
+                    self.server_status[name] = "disconnected"
 
-    def disconnect_all(self, timeout: float = 10.0):
+    def disconnect_all(self):
         """Đóng toàn bộ kết nối MCP Servers."""
         with self._lock:
-            if self._started:
+            try:
+                if self._loop is not None:
+                    self._run_coroutine(
+                        self._disconnect_all_async(),
+                        self.operation_timeout + 1,
+                    )
+            except Exception as exc:
+                logger.debug("Lỗi khi đóng MCP sessions: %s", exc)
+            finally:
                 try:
-                    self._run_coroutine(self._disconnect_all_async(), timeout=timeout)
-                except Exception:
-                    pass
+                    self._stop_loop()
+                finally:
+                    self.sessions.clear()
+                    self._started = False
+                    for name in self.server_status:
+                        self.server_status[name] = "disconnected"
 
     # ------------------ Thực thi Tool (BaseMCPClient) ------------------
 
@@ -175,10 +282,15 @@ class MultiServerMCPClient(BaseMCPClient):
 
     # ------------------ Giao diện Đồng bộ (Sync) ------------------
 
-    def list_tools_sync(self, server_name: str, timeout: float = 15.0) -> List[ToolDefinition]:
+    def list_tools_sync(self, server_name: str) -> List[ToolDefinition]:
         """Lấy danh sách tools (gọi đồng bộ)."""
-        return self._run_coroutine(self.list_tools(server_name), timeout=timeout)
+        return self._run_coroutine(
+            self.list_tools(server_name), self.operation_timeout + 1
+        )
 
-    def call_tool_sync(self, server_name: str, tool_name: str, arguments: Dict[str, Any], timeout: float = 30.0) -> MCPToolResult:
+    def call_tool_sync(self, server_name: str, tool_name: str, arguments: Dict[str, Any]) -> MCPToolResult:
         """Thực thi tool (gọi đồng bộ)."""
-        return self._run_coroutine(self.call_tool(server_name, tool_name, arguments), timeout=timeout)
+        return self._run_coroutine(
+            self.call_tool(server_name, tool_name, arguments),
+            self.operation_timeout + 1,
+        )
