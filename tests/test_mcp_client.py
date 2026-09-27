@@ -1,6 +1,7 @@
 import asyncio
 import concurrent.futures
 import importlib
+import os
 import time
 from contextlib import asynccontextmanager
 
@@ -68,6 +69,7 @@ TIMEOUT_ENV = {
 
 def test_agent_setup_import_does_not_connect(monkeypatch):
     calls = []
+    original_environment = dict(os.environ)
     monkeypatch.setattr(
         MultiServerMCPClient,
         "connect_all",
@@ -85,6 +87,8 @@ def test_agent_setup_import_does_not_connect(monkeypatch):
     finally:
         for name, value in original_state.items():
             setattr(agent_setup, name, value)
+        os.environ.clear()
+        os.environ.update(original_environment)
     assert calls == []
 
 

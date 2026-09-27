@@ -6,7 +6,9 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
+from apps.chatbot import agent_setup
 from apps.chatbot.main import app
+from apps.chatbot.services.chat_service import chat_service
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT_DIR / ".env"
@@ -24,6 +26,9 @@ def preserve_env_file():
     original_environment = dict(os.environ)
     env_existed = ENV_PATH.exists()
     original_content = ENV_PATH.read_text(encoding="utf-8") if env_existed else None
+    original_llm_provider = agent_setup.llm_provider
+    original_root_agent = agent_setup.root_agent
+    original_chat_root_agent = chat_service.root_agent
 
     yield
 
@@ -33,6 +38,9 @@ def preserve_env_file():
         ENV_PATH.write_text(original_content, encoding="utf-8")
     else:
         ENV_PATH.unlink(missing_ok=True)
+    agent_setup.llm_provider = original_llm_provider
+    agent_setup.root_agent = original_root_agent
+    chat_service.root_agent = original_chat_root_agent
 
 
 def test_get_settings(client):
