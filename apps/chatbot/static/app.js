@@ -454,6 +454,8 @@ function appendMessageToDOM(role, content, metadata = null) {
 
     const routedBy = metadata.routed_by || "root_agent";
     const agent = metadata.agent || metadata.source || metadata.intent || "hiring";
+    const badgeClass = `badge-${agent}`;
+    const tool = metadata.tool_used || metadata.tool || "";
     const latencyBadge = (metadata.latency_ms !== undefined) 
       ? `<span class="badge-arrow">➔</span><span class="trace-badge badge-latency" title="Thời gian phản hồi hệ thống">⚡ ${metadata.latency_ms}ms</span>` 
       : "";
@@ -521,19 +523,21 @@ async function handleSendMessage() {
   // If user attached an image with OCR text
   if (currentChatAttachment) {
     const ocrSnippet = currentChatAttachment.text ? currentChatAttachment.text.trim() : "";
-    const fileName = currentChatAttachment.filename || "hình ảnh";
+    const fileName = currentChatAttachment.filename || "tệp đính kèm";
+    const isPdf = fileName.toLowerCase().endsWith(".pdf");
+    const fileLabel = isPdf ? "tài liệu PDF" : "ảnh";
 
     if (ocrSnippet) {
       if (!text) {
-        messageToSend = `[Văn bản trích xuất từ tệp ảnh ${fileName} qua OCR]:\n${ocrSnippet}\n\nHãy tóm tắt và phân tích nội dung tài liệu trên.`;
-        displayMessage = `📎 **[Đã đính kèm ảnh: \`${fileName}\`]**\n\n*(Nội dung OCR nhận diện được: ${ocrSnippet.length} ký tự)*\n\nHãy tóm tắt và phân tích nội dung tài liệu trên.`;
+        messageToSend = `[Văn bản trích xuất từ ${fileLabel} ${fileName} qua OCR]:\n${ocrSnippet}\n\nHãy tóm tắt và phân tích nội dung tài liệu trên.`;
+        displayMessage = `📎 **[Đã đính kèm ${fileLabel}: \`${fileName}\`]**\n\n*(Nội dung OCR nhận diện được: ${ocrSnippet.length} ký tự)*\n\nHãy tóm tắt và phân tích nội dung tài liệu trên.`;
       } else {
-        messageToSend = `[Văn bản trích xuất từ tệp ảnh ${fileName} qua OCR]:\n${ocrSnippet}\n\n${text}`;
-        displayMessage = `📎 **[Đã đính kèm ảnh: \`${fileName}\`]**\n\n${text}`;
+        messageToSend = `[Văn bản trích xuất từ ${fileLabel} ${fileName} qua OCR]:\n${ocrSnippet}\n\n${text}`;
+        displayMessage = `📎 **[Đã đính kèm ${fileLabel}: \`${fileName}\`]**\n\n${text}`;
       }
     } else {
       if (!text) {
-        displayMessage = `📎 **[Đã đính kèm ảnh: \`${fileName}\`]**`;
+        displayMessage = `📎 **[Đã đính kèm ${fileLabel}: \`${fileName}\`]**`;
       }
     }
     clearChatAttachment();
