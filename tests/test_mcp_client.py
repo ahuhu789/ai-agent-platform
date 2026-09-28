@@ -20,12 +20,12 @@ class FakeTool:
 class FakeTools:
     def __init__(self, tools, next_cursor=None):
         self.tools = tools
-        self.nextCursor = next_cursor
+        self.next_cursor = next_cursor
 
 
 class FakeCallResult:
     def __init__(self, *, is_error=False, content=None):
-        self.isError = is_error
+        self.is_error = is_error
         self.content = content or []
 
 
@@ -36,7 +36,8 @@ class FakeSession:
         self.list_calls = []
         self.call_calls = []
 
-    async def list_tools(self, cursor=None):
+    async def list_tools(self, *, params=None):
+        cursor = getattr(params, "cursor", None)
         self.list_calls.append(cursor)
         response = self.pages.pop(0)
         if isinstance(response, BaseException):

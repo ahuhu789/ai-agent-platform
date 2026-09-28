@@ -16,6 +16,7 @@ from contextlib import AsyncExitStack
 
 from mcp.client.session import ClientSession
 from mcp.client.stdio import stdio_client, StdioServerParameters
+from mcp.types import PaginatedRequestParams
 
 from shared.abstractions.mcp_client import BaseMCPClient, ToolDefinition, MCPToolResult
 from shared.cache import InMemoryCache
@@ -245,8 +246,9 @@ class MultiServerMCPClient(BaseMCPClient):
             results = []
             cursor = None
             while True:
+                params = PaginatedRequestParams(cursor=cursor) if cursor else None
                 response = await asyncio.wait_for(
-                    session.list_tools(cursor=cursor),
+                    session.list_tools(params=params),
                     timeout=self.operation_timeout,
                 )
                 for tool in response.tools:
@@ -306,6 +308,9 @@ class MultiServerMCPClient(BaseMCPClient):
                 session.call_tool(tool_name, arguments or {}),
                 timeout=self.operation_timeout,
             )
+            is_error = bool(
+                getattr(response, "is_error", getattr(response, "isError", False))
+            )
 
             # Tổng hợp nội dung trả về từ CallToolResult
             text_parts = []
@@ -328,7 +333,7 @@ class MultiServerMCPClient(BaseMCPClient):
                             metadata={"server": server_name, **(data.get("metadata") or {})},
                         )
                     return MCPToolResult(
-                        success=not getattr(response, "isError", False),
+                        success=not is_error,
                         data=data,
                         metadata={"server": server_name},
                     )
@@ -336,7 +341,7 @@ class MultiServerMCPClient(BaseMCPClient):
                 pass
 
             return MCPToolResult(
-                success=not getattr(response, "isError", False),
+                success=not is_error,
                 data=text_output,
                 metadata={"server": server_name},
             )
