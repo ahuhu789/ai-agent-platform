@@ -1,7 +1,9 @@
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
-from apps.chatbot.main import app
+from apps.chatbot.main import app, lifespan
 
 
 class FakeMCPClient:
@@ -37,4 +39,19 @@ def test_lifespan_propagates_connection_failure(monkeypatch):
         with TestClient(app):
             pass
 
-    assert client.events == ["connect"]
+    assert client.events == ["connect", "disconnect"]
+
+
+@pytest.mark.parametrize("error_type", [KeyboardInterrupt, asyncio.CancelledError])
+def test_lifespan_disconnects_when_startup_is_interrupted(monkeypatch, error_type):
+    client = FakeMCPClient(error_type())
+    monkeypatch.setattr("apps.chatbot.main.mcp_client", client)
+
+    async def start():
+        async with lifespan(app):
+            pass
+
+    with pytest.raises(error_type):
+        asyncio.run(start())
+
+    assert client.events == ["connect", "disconnect"]

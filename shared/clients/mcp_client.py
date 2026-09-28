@@ -174,7 +174,7 @@ class MultiServerMCPClient(BaseMCPClient):
             )
             try:
                 self._run_coroutine(self._connect_all_async(), bridge_timeout)
-            except Exception:
+            except BaseException:
                 try:
                     if self._loop is not None:
                         self._run_coroutine(
@@ -184,7 +184,7 @@ class MultiServerMCPClient(BaseMCPClient):
                             ),
                             self.operation_timeout + 1,
                         )
-                except Exception as exc:
+                except BaseException as exc:
                     logger.debug("Lỗi khi dọn dẹp MCP startup: %s", exc)
                 finally:
                     self._stop_loop()
@@ -242,15 +242,13 @@ class MultiServerMCPClient(BaseMCPClient):
                 f"MCP server '{server_name}' is not connected for tool discovery"
             )
 
-        try:
+        async def discover():
             results = []
             cursor = None
+            seen_cursors = set()
             while True:
                 params = PaginatedRequestParams(cursor=cursor) if cursor else None
-                response = await asyncio.wait_for(
-                    session.list_tools(params=params),
-                    timeout=self.operation_timeout,
-                )
+                response = await session.list_tools(params=params)
                 for tool in response.tools:
                     name = getattr(tool, "name", None)
                     description = getattr(tool, "description", None)
@@ -271,11 +269,22 @@ class MultiServerMCPClient(BaseMCPClient):
                         description=description or "",
                         input_schema=schema,
                     ))
-                cursor = getattr(response, "nextCursor", None) or getattr(
+                next_cursor = getattr(response, "nextCursor", None) or getattr(
                     response, "next_cursor", None
                 )
-                if not cursor:
-                    break
+                if not next_cursor:
+                    return results
+                if next_cursor in seen_cursors:
+                    raise MCPConnectionError(
+                        f"Repeated discovery cursor from MCP server '{server_name}'"
+                    )
+                seen_cursors.add(next_cursor)
+                cursor = next_cursor
+
+        try:
+            results = await asyncio.wait_for(
+                discover(), timeout=self.operation_timeout
+            )
             self._discovery_cache.set(cache_key, results, self.discovery_ttl)
             return results
         except asyncio.TimeoutError as exc:
@@ -326,15 +335,19 @@ class MultiServerMCPClient(BaseMCPClient):
                 if isinstance(data, dict):
                     # Schema ToolResponse chuẩn của dự án: {"success": bool, "data": ..., "error": ..., "metadata": ...}
                     if "success" in data:
+                        error = data.get("error")
+                        if is_error and not error:
+                            error = text_output or "MCP tool returned an error"
                         return MCPToolResult(
-                            success=bool(data.get("success", False)),
+                            success=bool(data.get("success", False)) and not is_error,
                             data=data.get("data"),
-                            error=data.get("error"),
+                            error=error,
                             metadata={"server": server_name, **(data.get("metadata") or {})},
                         )
                     return MCPToolResult(
                         success=not is_error,
                         data=data,
+                        error=text_output if is_error else None,
                         metadata={"server": server_name},
                     )
             except (json.JSONDecodeError, TypeError):
@@ -343,6 +356,7 @@ class MultiServerMCPClient(BaseMCPClient):
             return MCPToolResult(
                 success=not is_error,
                 data=text_output,
+                error=text_output if is_error else None,
                 metadata={"server": server_name},
             )
 

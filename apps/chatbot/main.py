@@ -26,8 +26,8 @@ from apps.chatbot.routers import chat, conversations, settings as settings_route
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    await asyncio.to_thread(mcp_client.connect_all)
     try:
+        await asyncio.to_thread(mcp_client.connect_all)
         yield
     finally:
         await asyncio.to_thread(mcp_client.disconnect_all)

@@ -21,8 +21,8 @@ from shared.abstractions.agent import AgentRequest
 
 
 def main():
-    mcp_client.connect_all()
     try:
+        mcp_client.connect_all()
         run_chat_loop()
     finally:
         mcp_client.disconnect_all()
