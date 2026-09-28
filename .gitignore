@@ -27,3 +27,6 @@ htmlcov/
 
 # Logs
 *.log
+
+# Generated Exports
+exports/

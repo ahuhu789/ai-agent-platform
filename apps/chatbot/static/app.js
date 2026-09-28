@@ -12,6 +12,22 @@ const openSettingsBtn = document.getElementById("openSettingsBtn");
 const closeSettingsBtn = document.getElementById("closeSettingsBtn");
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
 
+// OCR State & Elements
+let currentChatAttachment = null; // { file, filename, text, metadata }
+let currentOcrModalResult = null; // { filename, text, metadata }
+
+const openOcrModalBtn = document.getElementById("openOcrModalBtn");
+const closeOcrBtn = document.getElementById("closeOcrBtn");
+const ocrModal = document.getElementById("ocrModal");
+const welcomeOcrCard = document.getElementById("welcomeOcrCard");
+const chatAttachBtn = document.getElementById("chatAttachBtn");
+const chatFileInput = document.getElementById("chatFileInput");
+const chatAttachmentPreview = document.getElementById("chatAttachmentPreview");
+const attachmentNameEl = document.getElementById("attachmentName");
+const attachmentOcrStatusEl = document.getElementById("attachmentOcrStatus");
+const attachmentThumbEl = document.getElementById("attachmentThumb");
+const removeAttachmentBtn = document.getElementById("removeAttachmentBtn");
+
 // Clean unnecessary backslash escapes from LLMs (\| -> |, \@ -> @, \* -> *, etc.)
 function cleanMarkdownEscapes(text) {
   if (!text) return "";
@@ -185,9 +201,108 @@ async function initApp() {
   });
   saveSettingsBtn.addEventListener("click", saveSettings);
 
+  // OCR Modal events
+  if (openOcrModalBtn) openOcrModalBtn.addEventListener("click", openOcrModal);
+  if (closeOcrBtn) closeOcrBtn.addEventListener("click", closeOcrModal);
+  if (welcomeOcrCard) welcomeOcrCard.addEventListener("click", openOcrModal);
+
+  // Close modals on clicking backdrop
+  window.addEventListener("click", (e) => {
+    if (e.target === settingsModal) settingsModal.style.display = "none";
+    if (e.target === ocrModal) closeOcrModal();
+  });
+
+  // OCR Dropzone & Modal File Input
+  const ocrDropZone = document.getElementById("ocrDropZone");
+  const ocrModalFileInput = document.getElementById("ocrModalFileInput");
+  if (ocrDropZone && ocrModalFileInput) {
+    ocrDropZone.addEventListener("click", () => ocrModalFileInput.click());
+    ocrModalFileInput.addEventListener("change", (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handleOcrModalFileUpload(e.target.files[0]);
+      }
+    });
+
+    ocrDropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      ocrDropZone.classList.add("dragover");
+    });
+    ocrDropZone.addEventListener("dragleave", () => {
+      ocrDropZone.classList.remove("dragover");
+    });
+    ocrDropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      ocrDropZone.classList.remove("dragover");
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        handleOcrModalFileUpload(e.dataTransfer.files[0]);
+      }
+    });
+  }
+
+  // OCR Modal Action Buttons
+  const ocrCopyBtn = document.getElementById("ocrCopyBtn");
+  const ocrDownloadBtn = document.getElementById("ocrDownloadBtn");
+  const ocrSendToChatBtn = document.getElementById("ocrSendToChatBtn");
+  const ocrResetBtn = document.getElementById("ocrResetBtn");
+
+  if (ocrCopyBtn) ocrCopyBtn.addEventListener("click", copyOcrText);
+  if (ocrDownloadBtn) ocrDownloadBtn.addEventListener("click", downloadOcrText);
+  if (ocrSendToChatBtn) ocrSendToChatBtn.addEventListener("click", sendOcrTextToChat);
+  if (ocrResetBtn) ocrResetBtn.addEventListener("click", resetOcrModal);
+
+  // In-Chat Attachment Events
+  if (chatAttachBtn && chatFileInput) {
+    chatAttachBtn.addEventListener("click", () => chatFileInput.click());
+    chatFileInput.addEventListener("change", (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handleChatFileAttachment(e.target.files[0]);
+      }
+    });
+  }
+  if (removeAttachmentBtn) {
+    removeAttachmentBtn.addEventListener("click", clearChatAttachment);
+  }
+
+  // Global Drag & Drop onto Chat Area
+  const chatMessagesEl = document.getElementById("chatMessages");
+  const chatInputWrapper = document.querySelector(".chat-input-wrapper");
+  [chatMessagesEl, chatInputWrapper].forEach((targetEl) => {
+    if (!targetEl) return;
+    targetEl.addEventListener("dragover", (e) => {
+      e.preventDefault();
+    });
+    targetEl.addEventListener("drop", (e) => {
+      e.preventDefault();
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        const file = e.dataTransfer.files[0];
+        if (file.type.startsWith("image/")) {
+          handleChatFileAttachment(file);
+        }
+      }
+    });
+  });
+
+  // Global Clipboard Paste (Ctrl+V) for Screenshots / Images
+  window.addEventListener("paste", (e) => {
+    if (e.clipboardData && e.clipboardData.items) {
+      for (let i = 0; i < e.clipboardData.items.length; i++) {
+        const item = e.clipboardData.items[i];
+        if (item.type.indexOf("image") !== -1) {
+          const blob = item.getAsFile();
+          if (blob) {
+            const pasteFile = new File([blob], `screenshot_${Date.now()}.png`, { type: blob.type });
+            handleChatFileAttachment(pasteFile);
+            break;
+          }
+        }
+      }
+    }
+  });
+
   // Quick chips
   document.querySelectorAll(".prompt-card").forEach((card) => {
     card.addEventListener("click", () => {
+      if (card.id === "welcomeOcrCard") return;
       const prompt = card.getAttribute("data-prompt");
       if (prompt) {
         chatInputEl.value = prompt;
@@ -385,15 +500,40 @@ function scrollToBottom() {
 // Handle Send Message
 async function handleSendMessage() {
   const text = chatInputEl.value.trim();
-  if (!text || isGenerating) return;
+  if (!text && !currentChatAttachment) return;
+  if (isGenerating) return;
 
   chatInputEl.value = "";
   chatInputEl.style.height = "auto";
   isGenerating = true;
   sendBtnEl.disabled = true;
 
+  let messageToSend = text;
+  let displayMessage = text;
+
+  // If user attached an image with OCR text
+  if (currentChatAttachment) {
+    const ocrSnippet = currentChatAttachment.text ? currentChatAttachment.text.trim() : "";
+    const fileName = currentChatAttachment.filename || "hình ảnh";
+
+    if (ocrSnippet) {
+      if (!text) {
+        messageToSend = `[Văn bản trích xuất từ tệp ảnh ${fileName} qua OCR]:\n${ocrSnippet}\n\nHãy tóm tắt và phân tích nội dung tài liệu trên.`;
+        displayMessage = `📎 **[Đã đính kèm ảnh: \`${fileName}\`]**\n\n*(Nội dung OCR nhận diện được: ${ocrSnippet.length} ký tự)*\n\nHãy tóm tắt và phân tích nội dung tài liệu trên.`;
+      } else {
+        messageToSend = `[Văn bản trích xuất từ tệp ảnh ${fileName} qua OCR]:\n${ocrSnippet}\n\n${text}`;
+        displayMessage = `📎 **[Đã đính kèm ảnh: \`${fileName}\`]**\n\n${text}`;
+      }
+    } else {
+      if (!text) {
+        displayMessage = `📎 **[Đã đính kèm ảnh: \`${fileName}\`]**`;
+      }
+    }
+    clearChatAttachment();
+  }
+
   // Append user message to DOM
-  appendMessageToDOM("user", text);
+  appendMessageToDOM("user", displayMessage);
 
   // Loading indicator bubble
   const loadingRow = document.createElement("div");
@@ -411,7 +551,7 @@ async function handleSendMessage() {
 
   try {
     const payload = {
-      message: text,
+      message: messageToSend,
       conversation_id: currentConversationId,
     };
 
@@ -633,5 +773,213 @@ async function saveSettings() {
   }
 }
 
+// =============================================================================
+// OCR Functions & Handlers
+// =============================================================================
+
+function openOcrModal() {
+  if (ocrModal) {
+    ocrModal.style.display = "flex";
+  }
+}
+
+function closeOcrModal() {
+  if (ocrModal) {
+    ocrModal.style.display = "none";
+  }
+}
+
+function resetOcrModal() {
+  const dropZone = document.getElementById("ocrDropZone");
+  const loading = document.getElementById("ocrLoadingState");
+  const resultContainer = document.getElementById("ocrResultContainer");
+  const modalFileInput = document.getElementById("ocrModalFileInput");
+  const copyBtn = document.getElementById("ocrCopyBtn");
+  const downloadBtn = document.getElementById("ocrDownloadBtn");
+  const sendChatBtn = document.getElementById("ocrSendToChatBtn");
+  const resetBtn = document.getElementById("ocrResetBtn");
+
+  if (dropZone) dropZone.style.display = "block";
+  if (loading) loading.style.display = "none";
+  if (resultContainer) resultContainer.style.display = "none";
+  if (modalFileInput) modalFileInput.value = "";
+  if (copyBtn) copyBtn.style.display = "none";
+  if (downloadBtn) downloadBtn.style.display = "none";
+  if (sendChatBtn) sendChatBtn.style.display = "none";
+  if (resetBtn) resetBtn.style.display = "none";
+  currentOcrModalResult = null;
+}
+
+async function runOcrApi(file, lang = "vie+eng", preprocess = true) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("lang", lang);
+  formData.append("preprocess", preprocess ? "true" : "false");
+
+  const res = await fetch("/ocr/process", {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.detail || errData.error_message || `HTTP ${res.status}`);
+  }
+  return await res.json();
+}
+
+async function handleOcrModalFileUpload(file) {
+  if (!file) return;
+  const dropZone = document.getElementById("ocrDropZone");
+  const loading = document.getElementById("ocrLoadingState");
+  const resultContainer = document.getElementById("ocrResultContainer");
+  const previewImg = document.getElementById("ocrPreviewImage");
+  const extractedTextarea = document.getElementById("ocrExtractedText");
+  const langSelect = document.getElementById("ocrLangSelect");
+  const preprocessCheck = document.getElementById("ocrPreprocessCheck");
+  const copyBtn = document.getElementById("ocrCopyBtn");
+  const downloadBtn = document.getElementById("ocrDownloadBtn");
+  const sendChatBtn = document.getElementById("ocrSendToChatBtn");
+  const resetBtn = document.getElementById("ocrResetBtn");
+
+  const lang = langSelect ? langSelect.value : "vie+eng";
+  const preprocess = preprocessCheck ? preprocessCheck.checked : true;
+
+  if (dropZone) dropZone.style.display = "none";
+  if (loading) loading.style.display = "flex";
+  if (resultContainer) resultContainer.style.display = "none";
+
+  // Create preview URL for image
+  const imageUrl = URL.createObjectURL(file);
+  if (previewImg) previewImg.src = imageUrl;
+
+  try {
+    const result = await runOcrApi(file, lang, preprocess);
+    loading.style.display = "none";
+    resultContainer.style.display = "block";
+
+    const text = result.text || "";
+    if (extractedTextarea) extractedTextarea.value = text;
+
+    const meta = result.metadata || {};
+    const metricDuration = document.getElementById("metricDuration");
+    const metricConfidence = document.getElementById("metricConfidence");
+    const metricWords = document.getElementById("metricWords");
+    const metricSize = document.getElementById("metricSize");
+
+    if (metricDuration) metricDuration.innerHTML = `⚡ Thời gian: <span>${meta.duration_ms || 0} ms</span>`;
+    if (metricConfidence) metricConfidence.innerHTML = `🎯 Độ tự tin: <span>${meta.confidence !== undefined ? Math.round(meta.confidence) : 100}%</span>`;
+    if (metricWords) metricWords.innerHTML = `📝 Số từ: <span>${meta.word_count || 0} từ</span>`;
+    if (metricSize) metricSize.innerHTML = `📏 Kích thước: <span>${meta.image_width || 0} x ${meta.image_height || 0}</span>`;
+
+    if (copyBtn) copyBtn.style.display = "inline-flex";
+    if (downloadBtn) downloadBtn.style.display = "inline-flex";
+    if (sendChatBtn) sendChatBtn.style.display = "inline-flex";
+    if (resetBtn) resetBtn.style.display = "inline-flex";
+
+    currentOcrModalResult = {
+      filename: file.name,
+      text: text,
+      metadata: meta,
+    };
+  } catch (err) {
+    loading.style.display = "none";
+    dropZone.style.display = "block";
+    alert(`❌ Lỗi nhận diện OCR: ${err.message}`);
+  }
+}
+
+function copyOcrText() {
+  const textarea = document.getElementById("ocrExtractedText");
+  if (!textarea || !textarea.value) return;
+  navigator.clipboard.writeText(textarea.value).then(() => {
+    const copyBtn = document.getElementById("ocrCopyBtn");
+    if (copyBtn) {
+      const orig = copyBtn.innerHTML;
+      copyBtn.innerHTML = "✅ Đã sao chép!";
+      setTimeout(() => { copyBtn.innerHTML = orig; }, 1500);
+    }
+  });
+}
+
+function downloadOcrText() {
+  const textarea = document.getElementById("ocrExtractedText");
+  if (!textarea || !textarea.value) return;
+  const blob = new Blob([textarea.value], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `ocr_result_${Date.now()}.txt`;
+  a.click();
+}
+
+function sendOcrTextToChat() {
+  const textarea = document.getElementById("ocrExtractedText");
+  if (!textarea || !textarea.value) return;
+  const text = textarea.value.trim();
+  closeOcrModal();
+  chatInputEl.value = `[Dữ liệu tài liệu/hình ảnh đã quét qua OCR]:\n${text}\n\nHãy phân tích và tóm tắt nội dung trên.`;
+  chatInputEl.style.height = "auto";
+  chatInputEl.style.height = Math.min(chatInputEl.scrollHeight, 120) + "px";
+  chatInputEl.focus();
+}
+
+// In-chat file attachment handling
+async function handleChatFileAttachment(file) {
+  if (!file) return;
+  if (!file.type.startsWith("image/") && !file.name.match(/\.(png|jpe?g|webp|bmp|tiff?)$/i)) {
+    alert("Vui lòng chọn tệp hình ảnh hợp lệ (PNG, JPG, WEBP, BMP, TIFF) để thực hiện OCR.");
+    return;
+  }
+
+  if (chatAttachmentPreview) chatAttachmentPreview.style.display = "flex";
+  if (attachmentNameEl) attachmentNameEl.textContent = file.name;
+  if (attachmentOcrStatusEl) {
+    attachmentOcrStatusEl.textContent = "⏳ Đang quét OCR qua Tesseract...";
+    attachmentOcrStatusEl.style.color = "#38bdf8";
+  }
+
+  // Generate thumbnail
+  if (attachmentThumbEl) {
+    const objUrl = URL.createObjectURL(file);
+    attachmentThumbEl.innerHTML = `<img src="${objUrl}" style="width:24px; height:24px; object-fit:cover; border-radius:4px;">`;
+  }
+
+  currentChatAttachment = {
+    file: file,
+    filename: file.name,
+    text: "",
+    metadata: null,
+  };
+
+  try {
+    const result = await runOcrApi(file, "vie+eng", true);
+    if (result.success && result.text) {
+      currentChatAttachment.text = result.text.trim();
+      currentChatAttachment.metadata = result.metadata;
+      const count = result.metadata ? result.metadata.word_count : (result.text.split(/\s+/).length);
+      if (attachmentOcrStatusEl) {
+        attachmentOcrStatusEl.textContent = `✅ Đã quét OCR (${count} từ - ${result.metadata ? Math.round(result.metadata.confidence) : 100}%)`;
+        attachmentOcrStatusEl.style.color = "#34d399";
+      }
+    } else {
+      if (attachmentOcrStatusEl) {
+        attachmentOcrStatusEl.textContent = "⚠️ Ảnh không chứa văn bản rõ ràng";
+        attachmentOcrStatusEl.style.color = "#fbbf24";
+      }
+    }
+  } catch (err) {
+    if (attachmentOcrStatusEl) {
+      attachmentOcrStatusEl.textContent = `❌ Lỗi OCR: ${err.message}`;
+      attachmentOcrStatusEl.style.color = "#f87171";
+    }
+  }
+}
+
+function clearChatAttachment() {
+  currentChatAttachment = null;
+  if (chatAttachmentPreview) chatAttachmentPreview.style.display = "none";
+  if (chatFileInput) chatFileInput.value = "";
+}
+
 // Run on page load
 document.addEventListener("DOMContentLoaded", initApp);
+

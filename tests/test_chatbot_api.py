@@ -134,3 +134,37 @@ def test_conversations_messages_and_user_isolation(client):
     bob_msg_res = client.get(f"/conversations/{conv_alice}/messages?user_id=user_bob")
     assert bob_msg_res.status_code == 404
 
+
+def test_ocr_health_api(client):
+    response = client.get("/ocr/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert "status" in data
+    assert "engine" in data
+    assert data["engine"] == "tesseract"
+
+
+def test_ocr_process_api(client):
+    import io
+    from PIL import Image, ImageDraw
+
+    # Tạo ảnh mẫu đơn giản
+    img = Image.new("RGB", (300, 80), color="white")
+    draw = ImageDraw.Draw(img)
+    draw.text((20, 25), "FASTAPI OCR", fill="black")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+
+    response = client.post(
+        "/ocr/process",
+        files={"file": ("test_doc.png", buf.getvalue(), "image/png")},
+        data={"lang": "eng", "preprocess": "true"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert "FASTAPI" in data["text"] or "OCR" in data["text"]
+    assert data["metadata"]["source"] == "test_doc.png"
+    assert data["metadata"]["engine"] == "tesseract"
+

@@ -18,14 +18,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from apps.chatbot.config import settings
-from apps.chatbot.routers import chat, conversations, settings as settings_router
+from apps.chatbot.routers import chat, conversations, ocr as ocr_router, settings as settings_router
 
 app = FastAPI(
     title=settings.APP_TITLE,
     version=settings.APP_VERSION,
     description=(
         "API cho /chat (route qua Root Agent -> Domain Agent), /conversations "
-        "(quản lý lịch sử hội thoại) và /settings (quản lý file .env và cấu hình LLM). Swagger UI tự sinh tại /docs."
+        "(quản lý lịch sử hội thoại), /ocr (nhận dạng ký tự quang học) và /settings (quản lý file .env và cấu hình LLM). Swagger UI tự sinh tại /docs."
     ),
 )
 
@@ -39,6 +39,7 @@ app.add_middleware(
 
 app.include_router(conversations.router)
 app.include_router(chat.router)
+app.include_router(ocr_router.router)
 app.include_router(settings_router.router)
 
 # Mount static web demo UI
