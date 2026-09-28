@@ -490,9 +490,15 @@ def test_invalid_tool_definition_is_rejected_and_not_cached(tool):
 def test_list_tools_timeout_marks_server_failed(monkeypatch):
     async def exercise():
         session = FakeSession()
+        cancelled = False
 
-        async def hang(cursor=None):
-            await asyncio.Future()
+        async def hang(*, params=None):
+            nonlocal cancelled
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
 
         session.list_tools = hang
         client = connected_client(
@@ -503,6 +509,7 @@ def test_list_tools_timeout_marks_server_failed(monkeypatch):
 
         with pytest.raises(MCPConnectionError, match="hiring"):
             await client.list_tools("hiring")
+        assert cancelled
         assert client.server_status["hiring"] == "failed"
 
     asyncio.run(exercise())
