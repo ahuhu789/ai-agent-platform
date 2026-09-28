@@ -32,6 +32,168 @@ class OCRService:
         self.processor = processor or ImageProcessor(self.config)
         self.engine = engine or TesseractEngine(self.config)
 
+    @staticmethod
+    def _is_pdf_input(image_input: Union[str, Path, bytes, Image.Image]) -> bool:
+        """Kiểm tra xem đầu vào có phải là tệp hoặc luồng dữ liệu PDF hay không."""
+        if isinstance(image_input, (str, Path)):
+            return str(image_input).lower().endswith(".pdf")
+        if isinstance(image_input, bytes):
+            return image_input[:5].startswith(b"%PDF") or b"%PDF-" in image_input[:1024]
+        return False
+
+    def _process_pdf(
+        self,
+        pdf_input: Union[str, Path, bytes],
+        opts: OCROptions,
+        start_time: float
+    ) -> OCRResult:
+        """
+        Quy trình xử lý OCR cho tài liệu PDF (hỗ trợ cả văn bản số & tài liệu scan/ảnh).
+        """
+        import io
+        source_name = "document.pdf"
+        page_texts = []
+        confidences = []
+        total_pages = 0
+        img_width = 0
+        img_height = 0
+        was_preprocessed = False
+
+        try:
+            try:
+                import pymupdf
+                doc = None
+                if isinstance(pdf_input, (str, Path)):
+                    path_obj = Path(pdf_input)
+                    source_name = path_obj.name
+                    if not path_obj.exists():
+                        raise FileNotFoundError(f"Tệp PDF không tồn tại: '{pdf_input}'")
+                    doc = pymupdf.open(str(path_obj))
+                elif isinstance(pdf_input, bytes):
+                    source_name = "pdf_bytes"
+                    if len(pdf_input) == 0:
+                        raise ValueError("Dữ liệu PDF bytes rỗng (0 bytes).")
+                    doc = pymupdf.open(stream=pdf_input, filetype="pdf")
+                else:
+                    raise TypeError(f"Kiểu dữ liệu PDF không hợp lệ: {type(pdf_input)}")
+
+                total_pages = len(doc)
+                if total_pages == 0:
+                    raise ValueError("Tệp PDF không có trang nào.")
+
+                for idx, page in enumerate(doc):
+                    direct_text = page.get_text().strip()
+                    # Nếu trang có sẵn văn bản số rõ ràng (>30 ký tự hoặc nhiều hơn 5 từ)
+                    if len(direct_text) > 30 or len(direct_text.split()) > 5:
+                        page_texts.append(direct_text)
+                        confidences.append(100.0)
+                        rect = page.rect
+                        if rect.width > img_width:
+                            img_width = int(rect.width)
+                            img_height = int(rect.height)
+                    else:
+                        # Trang scan hoặc chứa ảnh: render trang sang ảnh và chạy Tesseract OCR
+                        pix = page.get_pixmap(dpi=150)
+                        img_width = max(img_width, pix.width)
+                        img_height = max(img_height, pix.height)
+                        page_img = Image.open(io.BytesIO(pix.tobytes("png")))
+
+                        if opts.preprocess:
+                            page_img = self.processor.preprocess(page_img, opts)
+                            was_preprocessed = True
+
+                        extracted_text, conf, _ = self.engine.extract(
+                            image=page_img,
+                            lang=opts.lang,
+                            psm=opts.psm,
+                            oem=opts.oem,
+                            timeout=opts.timeout_seconds
+                        )
+                        cleaned = extracted_text.strip()
+                        if cleaned:
+                            page_texts.append(cleaned)
+                        elif direct_text:
+                            page_texts.append(direct_text)
+
+                        if conf > 0:
+                            confidences.append(conf)
+
+            except ImportError:
+                import pypdf
+                if isinstance(pdf_input, (str, Path)):
+                    path_obj = Path(pdf_input)
+                    source_name = path_obj.name
+                    reader = pypdf.PdfReader(str(path_obj))
+                else:
+                    reader = pypdf.PdfReader(io.BytesIO(pdf_input))
+
+                total_pages = len(reader.pages)
+                for idx, page in enumerate(reader.pages):
+                    t = (page.extract_text() or "").strip()
+                    if t:
+                        page_texts.append(t)
+                        confidences.append(100.0)
+
+            # Tổng hợp văn bản theo từng trang nếu có nhiều hơn 1 trang
+            if len(page_texts) == 1:
+                combined_text = page_texts[0]
+            elif len(page_texts) > 1:
+                combined_text = "\n\n".join(
+                    f"--- Trang {i + 1} ---\n{text}" for i, text in enumerate(page_texts)
+                )
+            else:
+                combined_text = ""
+
+            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            cleaned_text = combined_text.strip()
+            status = OCRStatus.SUCCESS if cleaned_text else OCRStatus.EMPTY
+            avg_conf = round(sum(confidences) / len(confidences), 2) if confidences else 100.0
+            words_count = len(cleaned_text.split()) if cleaned_text else 0
+
+            metadata = OCRMetadata(
+                source=source_name,
+                image_width=img_width,
+                image_height=img_height,
+                image_format="PDF",
+                language=opts.lang,
+                word_count=words_count,
+                char_count=len(cleaned_text),
+                confidence=avg_conf,
+                duration_ms=duration_ms,
+                engine="tesseract+pymupdf",
+                preprocessed=was_preprocessed
+            )
+
+            return OCRResult(
+                text=cleaned_text,
+                status=status,
+                metadata=metadata,
+                words=[],
+                error_message=None
+            )
+
+        except Exception as e:
+            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            return OCRResult(
+                text="",
+                status=OCRStatus.FAILED,
+                metadata=OCRMetadata(
+                    source=source_name,
+                    image_width=0,
+                    image_height=0,
+                    image_format="PDF",
+                    language=opts.lang,
+                    word_count=0,
+                    char_count=0,
+                    confidence=0.0,
+                    duration_ms=duration_ms,
+                    engine="tesseract+pymupdf",
+                    preprocessed=False
+                ),
+                words=[],
+                error_message=str(e)
+            )
+
     def process(
         self, 
         image_input: Union[str, Path, bytes, Image.Image], 
@@ -40,9 +202,10 @@ class OCRService:
         """
         Quy trình xử lý OCR hoàn chỉnh:
         Load/Validate -> Preprocess -> OCR Extraction -> Build Metadata -> Return OCRResult.
+        Hỗ trợ hình ảnh (PNG, JPG, WEBP, BMP, TIFF) và tài liệu PDF.
         
         Args:
-            image_input: Đường dẫn tệp ảnh, Path, dữ liệu bytes hoặc đối tượng PIL.Image.
+            image_input: Đường dẫn tệp ảnh/PDF, Path, dữ liệu bytes hoặc đối tượng PIL.Image.
             options: Cấu hình tùy chọn cho lần chạy này (ngôn ngữ, tiền xử lý, psm, timeout...).
             
         Returns:
@@ -50,6 +213,10 @@ class OCRService:
         """
         opts = options or OCROptions()
         start_time = time.perf_counter()
+        
+        # Nếu đầu vào là tệp hoặc luồng dữ liệu PDF, điều hướng tới xử lý PDF chuyên dụng
+        if self._is_pdf_input(image_input):
+            return self._process_pdf(image_input, opts, start_time)
         
         source_name = "unknown"
         img_width = 0

@@ -168,3 +168,24 @@ def test_ocr_process_api(client):
     assert data["metadata"]["source"] == "test_doc.png"
     assert data["metadata"]["engine"] == "tesseract"
 
+
+def test_ocr_process_pdf_api(client):
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((50, 72), "HOP DONG LAO DONG PDF TEST")
+    pdf_bytes = doc.tobytes()
+
+    response = client.post(
+        "/ocr/process",
+        files={"file": ("contract.pdf", pdf_bytes, "application/pdf")},
+        data={"lang": "vie+eng", "preprocess": "true"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert "HOP DONG LAO DONG" in data["text"]
+    assert data["metadata"]["source"] == "contract.pdf"
+    assert data["metadata"]["image_format"] == "PDF"
+

@@ -21,9 +21,9 @@ class OCRConfig:
     # Dung lượng file ảnh tối đa cho phép (MB)
     MAX_IMAGE_SIZE_MB: int = int(os.getenv("OCR_MAX_IMAGE_SIZE_MB", "25"))
     
-    # Các định dạng file ảnh được hỗ trợ
+    # Các định dạng file được hỗ trợ (ảnh + tài liệu PDF)
     ALLOWED_EXTENSIONS: tuple = (
-        ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp"
+        ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp", ".pdf"
     )
     
     # Tự động tiền xử lý ảnh (chuyển xám, khử nhiễu, tăng tương phản)

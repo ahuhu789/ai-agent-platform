@@ -281,7 +281,8 @@ function setupAllEventListeners() {
       e.preventDefault();
       if (e.dataTransfer.files && e.dataTransfer.files[0]) {
         const file = e.dataTransfer.files[0];
-        if (file.type.startsWith("image/")) {
+        const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+        if (file.type.startsWith("image/") || isPdf) {
           handleChatFileAttachment(file);
         }
       }
@@ -813,6 +814,10 @@ function resetOcrModal() {
   if (downloadBtn) downloadBtn.style.display = "none";
   if (sendChatBtn) sendChatBtn.style.display = "none";
   if (resetBtn) resetBtn.style.display = "none";
+  const pdfPlaceholder = document.getElementById("ocrPdfPlaceholder");
+  if (pdfPlaceholder) pdfPlaceholder.style.display = "none";
+  const previewImg = document.getElementById("ocrPreviewImage");
+  if (previewImg) previewImg.style.display = "block";
   currentOcrModalResult = null;
 }
 
@@ -850,13 +855,47 @@ async function handleOcrModalFileUpload(file) {
   const lang = langSelect ? langSelect.value : "vie+eng";
   const preprocess = preprocessCheck ? preprocessCheck.checked : true;
 
+  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  const isImage = file.type.startsWith("image/") || file.name.match(/\.(png|jpe?g|webp|bmp|tiff?)$/i);
+  if (!isPdf && !isImage) {
+    alert("Vui lòng chọn tệp hình ảnh (PNG, JPG, WEBP, BMP, TIFF) hoặc tài liệu PDF hợp lệ.");
+    return;
+  }
+
   if (dropZone) dropZone.style.display = "none";
   if (loading) loading.style.display = "flex";
   if (resultContainer) resultContainer.style.display = "none";
 
-  // Create preview URL for image
-  const imageUrl = URL.createObjectURL(file);
-  if (previewImg) previewImg.src = imageUrl;
+  // PDF or Image preview handling
+  let pdfPlaceholder = document.getElementById("ocrPdfPlaceholder");
+  if (isPdf) {
+    if (previewImg) previewImg.style.display = "none";
+    if (!pdfPlaceholder && previewImg && previewImg.parentNode) {
+      pdfPlaceholder = document.createElement("div");
+      pdfPlaceholder.id = "ocrPdfPlaceholder";
+      pdfPlaceholder.style.cssText = "display:flex; flex-direction:column; align-items:center; justify-content:center; padding:35px 15px; color:#38bdf8; text-align:center;";
+      pdfPlaceholder.innerHTML = `
+        <span style="font-size:52px; line-height:1;">📄</span>
+        <span style="font-size:13px; font-weight:600; margin-top:10px; color:#f1f5f9; word-break:break-all;">${file.name}</span>
+        <span style="font-size:11px; color:#94a3b8; margin-top:4px;">Tài liệu PDF (${(file.size / 1024).toFixed(1)} KB)</span>
+      `;
+      previewImg.parentNode.appendChild(pdfPlaceholder);
+    } else if (pdfPlaceholder) {
+      pdfPlaceholder.style.display = "flex";
+      pdfPlaceholder.innerHTML = `
+        <span style="font-size:52px; line-height:1;">📄</span>
+        <span style="font-size:13px; font-weight:600; margin-top:10px; color:#f1f5f9; word-break:break-all;">${file.name}</span>
+        <span style="font-size:11px; color:#94a3b8; margin-top:4px;">Tài liệu PDF (${(file.size / 1024).toFixed(1)} KB)</span>
+      `;
+    }
+  } else {
+    if (pdfPlaceholder) pdfPlaceholder.style.display = "none";
+    if (previewImg) {
+      previewImg.style.display = "block";
+      const imageUrl = URL.createObjectURL(file);
+      previewImg.src = imageUrl;
+    }
+  }
 
   try {
     const result = await runOcrApi(file, lang, preprocess);
@@ -931,22 +970,28 @@ function sendOcrTextToChat() {
 // In-chat file attachment handling
 async function handleChatFileAttachment(file) {
   if (!file) return;
-  if (!file.type.startsWith("image/") && !file.name.match(/\.(png|jpe?g|webp|bmp|tiff?)$/i)) {
-    alert("Vui lòng chọn tệp hình ảnh hợp lệ (PNG, JPG, WEBP, BMP, TIFF) để thực hiện OCR.");
+  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  const isImage = file.type.startsWith("image/") || file.name.match(/\.(png|jpe?g|webp|bmp|tiff?)$/i);
+  if (!isPdf && !isImage) {
+    alert("Vui lòng chọn tệp hình ảnh hợp lệ (PNG, JPG, WEBP, BMP, TIFF) hoặc tài liệu PDF để thực hiện OCR.");
     return;
   }
 
   if (chatAttachmentPreview) chatAttachmentPreview.style.display = "flex";
   if (attachmentNameEl) attachmentNameEl.textContent = file.name;
   if (attachmentOcrStatusEl) {
-    attachmentOcrStatusEl.textContent = "⏳ Đang quét OCR qua Tesseract...";
+    attachmentOcrStatusEl.textContent = isPdf ? "⏳ Đang trích xuất & quét OCR PDF..." : "⏳ Đang quét OCR qua Tesseract...";
     attachmentOcrStatusEl.style.color = "#38bdf8";
   }
 
   // Generate thumbnail
   if (attachmentThumbEl) {
-    const objUrl = URL.createObjectURL(file);
-    attachmentThumbEl.innerHTML = `<img src="${objUrl}" style="width:24px; height:24px; object-fit:cover; border-radius:4px;">`;
+    if (isPdf) {
+      attachmentThumbEl.innerHTML = `<span style="font-size:20px; line-height:1;">📄</span>`;
+    } else {
+      const objUrl = URL.createObjectURL(file);
+      attachmentThumbEl.innerHTML = `<img src="${objUrl}" style="width:24px; height:24px; object-fit:cover; border-radius:4px;">`;
+    }
   }
 
   currentChatAttachment = {
@@ -962,19 +1007,20 @@ async function handleChatFileAttachment(file) {
       currentChatAttachment.text = result.text.trim();
       currentChatAttachment.metadata = result.metadata;
       const count = result.metadata ? result.metadata.word_count : (result.text.split(/\s+/).length);
+      const typeLabel = isPdf ? "PDF" : "OCR";
       if (attachmentOcrStatusEl) {
-        attachmentOcrStatusEl.textContent = `✅ Đã quét OCR (${count} từ - ${result.metadata ? Math.round(result.metadata.confidence) : 100}%)`;
+        attachmentOcrStatusEl.textContent = `✅ Đã quét ${typeLabel} (${count} từ - ${result.metadata ? Math.round(result.metadata.confidence) : 100}%)`;
         attachmentOcrStatusEl.style.color = "#34d399";
       }
     } else {
       if (attachmentOcrStatusEl) {
-        attachmentOcrStatusEl.textContent = "⚠️ Ảnh không chứa văn bản rõ ràng";
+        attachmentOcrStatusEl.textContent = isPdf ? "⚠️ PDF không chứa văn bản trích xuất được" : "⚠️ Ảnh không chứa văn bản rõ ràng";
         attachmentOcrStatusEl.style.color = "#fbbf24";
       }
     }
   } catch (err) {
     if (attachmentOcrStatusEl) {
-      attachmentOcrStatusEl.textContent = `❌ Lỗi OCR: ${err.message}`;
+      attachmentOcrStatusEl.textContent = `❌ Lỗi: ${err.message}`;
       attachmentOcrStatusEl.style.color = "#f87171";
     }
   }

@@ -14,14 +14,14 @@ router = APIRouter(prefix="/ocr", tags=["OCR"])
 
 @router.post(
     "/process",
-    summary="Tải lên tệp ảnh và thực hiện nhận dạng văn bản (OCR)",
+    summary="Tải lên tệp ảnh hoặc PDF và thực hiện nhận dạng văn bản (OCR)",
     description=(
-        "Nhận file ảnh tải lên (PNG, JPG, JPEG, WEBP, BMP, TIFF), "
-        "thực hiện tiền xử lý và gọi Tesseract OCR để bóc tách văn bản tiếng Việt và tiếng Anh."
+        "Nhận file ảnh (PNG, JPG, JPEG, WEBP, BMP, TIFF) hoặc tài liệu PDF tải lên, "
+        "thực hiện tiền xử lý và gọi OCR / PyMuPDF để bóc tách văn bản tiếng Việt và tiếng Anh."
     ),
 )
 async def process_ocr_file(
-    file: UploadFile = File(..., description="Tệp hình ảnh cần OCR"),
+    file: UploadFile = File(..., description="Tệp hình ảnh hoặc PDF cần OCR"),
     lang: str = Form("vie+eng", description="Gói ngôn ngữ OCR (vie+eng, vie, eng)"),
     preprocess: bool = Form(True, description="Bật tự động tiền xử lý ảnh (khử nhiễu, tăng nét)"),
     psm: int = Form(3, description="Page Segmentation Mode của Tesseract"),
