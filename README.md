@@ -80,7 +80,7 @@ AI Agent platform/
 │   ├── memory/                   # InMemoryStore & RedisMemoryStore (User-context & Agent-context)
 │   ├── cache/                    # InMemoryCache (Hỗ trợ TTL và thread-safe)
 │   └── logger/                   # Centralized logger cấu hình stream sys.stderr
-├── tests/                        # 161 automated unit, benchmark & integration tests
+├── tests/                        # Automated unit, benchmark & integration tests
 ├── requirements.txt              # Thư viện phụ thuộc
 ├── .env.example                  # File cấu hình mẫu đầy đủ các biến môi trường
 └── README.md                     # Tài liệu hướng dẫn dự án
@@ -103,8 +103,8 @@ AI Agent platform/
 ### 4.1. Cài đặt môi trường
 Yêu cầu Python 3.10 trở lên:
 ```bash
-# Cài đặt thư viện phụ thuộc
-pip install -r requirements.txt
+# Cài đặt thư viện với các phiên bản đã kiểm chứng
+python -m pip install -r requirements.txt -c constraints.txt
 
 # Thiết lập file cấu hình môi trường
 cp .env.example .env
@@ -118,6 +118,11 @@ LLM_PROVIDER=openai
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-4o-mini
 
+# MCP: thời gian kết nối, thời gian thao tác và TTL cache khám phá tool (giây)
+MCP_CONNECT_TIMEOUT_SECONDS=10
+MCP_OPERATION_TIMEOUT_SECONDS=30
+MCP_DISCOVERY_TTL_SECONDS=60
+
 # Chế độ Mock LLM / Rule-based (không tốn phí API, chạy offline hoàn toàn)
 # LLM_PROVIDER=mock
 ```
@@ -129,6 +134,10 @@ uvicorn apps.chatbot.main:app --reload --port 8000
 ```
 - **Web Demo UI**: Truy cập [http://localhost:8000](http://localhost:8000)
 - **Interactive Swagger Docs**: Truy cập [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Liveness**: `GET /health`
+- **Readiness**: `GET /health/ready` trả HTTP 200 khi cả ba MCP server đã kết nối; nếu không, trả HTTP 503 cùng trạng thái từng server.
+
+FastAPI kết nối cả ba MCP server khi khởi động và tự đóng session, event loop nền khi shutdown. Nếu kết nối ban đầu thất bại, ứng dụng không nhận traffic ở trạng thái suy giảm.
 
 ### 4.4. Khởi chạy giao diện dòng lệnh (Interactive CLI Chat)
 Nếu muốn trò chuyện trực tiếp qua terminal mà không cần bật Web Server:
@@ -139,19 +148,22 @@ python run_chat.py
 ```
 *(Hệ thống hỗ trợ đầy đủ bộ nhớ hội thoại đa lượt, tự động gọi MCP Servers cho cả 3 phân hệ Tuyển dụng, Chuyên cần và Nhân sự ngay cả khi không có OpenAI API Key).*
 
+CLI cũng tự đóng toàn bộ kết nối MCP khi kết thúc bình thường hoặc khi vòng chat phát sinh lỗi.
+
 ---
 
 ## 5. Kiểm thử tự động (Automated Testing)
 
-Toàn bộ hệ thống được bảo vệ bởi **161 unit, integration và benchmark tests**, chạy độc lập và không phụ thuộc dịch vụ ngoài:
+Chạy toàn bộ unit, integration và benchmark tests:
 
 ```bash
 python -m pytest tests/ -v
 ```
 
-Kết quả:
-```
-============================ 161 passed in ~18s =============================
+Kiểm tra smoke xác định cho đủ ba luồng Root Agent → Domain Agent → MCP mà không cần API key LLM:
+
+```bash
+python scripts/smoke_mcp_demo.py
 ```
 
 Các bộ test chính:

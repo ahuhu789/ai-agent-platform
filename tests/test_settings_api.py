@@ -87,6 +87,9 @@ def test_save_settings_creates_standard_groq_env(client):
     assert "OPENAI_MODEL=openai/gpt-oss-120b" in env_content
     assert "MEMORY_PROVIDER=in_memory" in env_content
     assert "MCP_TRANSPORT=stdio" in env_content
+    assert "MCP_CONNECT_TIMEOUT_SECONDS=10" in env_content
+    assert "MCP_OPERATION_TIMEOUT_SECONDS=30" in env_content
+    assert "MCP_DISCOVERY_TTL_SECONDS=60" in env_content
 
 
 def test_save_settings_auto_detect_groq_prefix(client):
