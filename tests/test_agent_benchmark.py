@@ -18,7 +18,9 @@ from agents.attendance.attendance_agent import AttendanceAgent
 from agents.employee.employee_agent import EmployeeAgent
 from shared.memory.factory import create_memory_store
 from shared.abstractions.memory import Message
+from apps.chatbot import agent_setup
 from apps.chatbot.main import app
+from apps.chatbot.services.chat_service import chat_service
 
 
 @pytest.fixture
@@ -46,9 +48,20 @@ def employee_agent():
 
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def api_client():
-    return TestClient(app)
+    original_llm = agent_setup.llm_provider
+    original_root_agent = chat_service.root_agent
+    try:
+        agent_setup.llm_provider = None
+        with TestClient(app) as client:
+            chat_service.root_agent = agent_setup.build_root_agent(
+                client=agent_setup.mcp_client
+            )
+            yield client
+    finally:
+        agent_setup.llm_provider = original_llm
+        chat_service.root_agent = original_root_agent
 
 
 # =====================================================================
@@ -274,5 +287,4 @@ def test_chat_multi_turn_cross_domain_benchmark(api_client):
     assert d4["success"] is True
     assert d4["metadata"]["intent"] == "attendance"
     assert ("Trần Thị B" in d4["reply"] or "NV002" in d4["reply"])
-
 
