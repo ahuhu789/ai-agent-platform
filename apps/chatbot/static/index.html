@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Agent Platform — FME Chatbot Demo</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=1.2.0">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤖</text></svg>">
 </head>
 <body>
@@ -51,7 +51,7 @@
         </div>
 
         <div class="navbar-actions">
-          <button id="openOcrModalBtn" class="btn-ocr" title="Mở bảng công cụ trích xuất văn bản từ hình ảnh (OCR)">
+          <button id="openOcrModalBtn" class="btn-ocr" onclick="window.openOcrModal && window.openOcrModal()" title="Mở bảng công cụ trích xuất văn bản từ hình ảnh (OCR)">
             <span>📷</span> Nhận diện OCR
           </button>
           <button id="openSettingsBtn" class="btn-settings">
@@ -85,7 +85,7 @@
               <span>⏰</span>
               <span>[Chuyên cần] Nhân viên A đi trễ bao nhiêu lần?</span>
             </div>
-            <div class="prompt-card" id="welcomeOcrCard">
+            <div class="prompt-card" id="welcomeOcrCard" onclick="window.openOcrModal && window.openOcrModal()">
               <span>📷</span>
               <span>[OCR] Bóc tách chữ từ ảnh hoặc tài liệu</span>
             </div>
@@ -107,14 +107,26 @@
               <span id="attachmentName" class="attachment-name">image.png</span>
               <span id="attachmentOcrStatus" class="attachment-status">Đang quét OCR...</span>
             </div>
-            <button id="removeAttachmentBtn" class="btn-remove-attachment" title="Gỡ tệp đính kèm">&times;</button>
+            <button type="button" id="removeAttachmentBtn" class="btn-remove-attachment" onclick="window.clearChatAttachment && window.clearChatAttachment()" title="Gỡ tệp đính kèm">&times;</button>
           </div>
         </div>
 
         <div class="input-box">
           <!-- Hidden file input for chat attachment -->
-          <input type="file" id="chatFileInput" accept="image/*" style="display: none;">
-          <button id="chatAttachBtn" class="btn-icon btn-attach" title="Đính kèm ảnh để nhận diện OCR & hỏi AI (hoặc kéo thả / Ctrl+V ảnh vào đây)">
+          <input
+            type="file"
+            id="chatFileInput"
+            accept="image/png,image/jpeg,image/webp,image/bmp,image/tiff"
+            style="display: none;"
+            onchange="if(window.handleChatFileInputChange) window.handleChatFileInputChange(this)"
+          >
+          <button
+            type="button"
+            id="chatAttachBtn"
+            class="btn-icon btn-attach"
+            onclick="document.getElementById('chatFileInput').click()"
+            title="Đính kèm ảnh để nhận diện OCR & hỏi AI (hoặc kéo thả / Ctrl+V ảnh vào đây)"
+          >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
             </svg>
@@ -169,8 +181,19 @@
         </div>
 
         <!-- Drag & Drop Zone -->
-        <div id="ocrDropZone" class="ocr-dropzone">
-          <input type="file" id="ocrModalFileInput" accept="image/*" style="display: none;">
+        <div
+          id="ocrDropZone"
+          class="ocr-dropzone"
+          onclick="document.getElementById('ocrModalFileInput').click()"
+          style="cursor: pointer;"
+        >
+          <input
+            type="file"
+            id="ocrModalFileInput"
+            accept="image/png,image/jpeg,image/webp,image/bmp,image/tiff"
+            style="display: none;"
+            onchange="if(window.handleOcrModalFileInputChange) window.handleOcrModalFileInputChange(this)"
+          >
           <div class="dropzone-content">
             <div class="dropzone-icon">📁</div>
             <p class="dropzone-title">Kéo & thả hình ảnh vào đây hoặc <span class="dropzone-browse">chọn tệp từ máy tính</span></p>
@@ -213,10 +236,10 @@
       </div>
 
       <div class="modal-footer ocr-modal-footer">
-        <button id="ocrCopyBtn" class="btn-action btn-copy" style="display: none;">📋 Sao chép văn bản</button>
-        <button id="ocrDownloadBtn" class="btn-action btn-download" style="display: none;">💾 Tải file .txt</button>
-        <button id="ocrSendToChatBtn" class="btn-action btn-send-chat" style="display: none;">💬 Hỏi AI về văn bản này</button>
-        <button id="ocrResetBtn" class="btn-action btn-reset" style="display: none;">🔄 Quét ảnh khác</button>
+        <button id="ocrCopyBtn" class="btn-action btn-copy" onclick="window.copyOcrText && window.copyOcrText()" style="display: none;">📋 Sao chép văn bản</button>
+        <button id="ocrDownloadBtn" class="btn-action btn-download" onclick="window.downloadOcrText && window.downloadOcrText()" style="display: none;">💾 Tải file .txt</button>
+        <button id="ocrSendToChatBtn" class="btn-action btn-send-chat" onclick="window.sendOcrTextToChat && window.sendOcrTextToChat()" style="display: none;">💬 Hỏi AI về văn bản này</button>
+        <button id="ocrResetBtn" class="btn-action btn-reset" onclick="window.resetOcrModal && window.resetOcrModal()" style="display: none;">🔄 Quét ảnh khác</button>
       </div>
     </div>
   </div>
@@ -266,6 +289,6 @@
 
   <script src="/static/libs/marked.min.js"></script>
   <script src="/static/libs/purify.min.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=1.2.0"></script>
 </body>
 </html>

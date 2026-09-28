@@ -172,13 +172,19 @@ function formatDate(dateStr) {
 }
 
 // Initialize Application
-async function initApp() {
-  loadSettings();
-  await loadConversations();
+function initApp() {
+  // Bind all UI listeners synchronously first
+  setupAllEventListeners();
 
+  // Then fetch initial server data asynchronously without blocking UI interactions
+  loadSettings();
+  loadConversations();
+}
+
+function setupAllEventListeners() {
   // Event Listeners
-  newChatBtn.addEventListener("click", startNewChat);
-  sendBtnEl.addEventListener("click", handleSendMessage);
+  if (newChatBtn) newChatBtn.addEventListener("click", startNewChat);
+  if (sendBtnEl) sendBtnEl.addEventListener("click", handleSendMessage);
 
   chatInputEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -979,6 +985,31 @@ function clearChatAttachment() {
   if (chatAttachmentPreview) chatAttachmentPreview.style.display = "none";
   if (chatFileInput) chatFileInput.value = "";
 }
+
+// Global window helpers for inline HTML event handlers & programmatic access
+window.openOcrModal = openOcrModal;
+window.closeOcrModal = closeOcrModal;
+window.resetOcrModal = resetOcrModal;
+window.copyOcrText = copyOcrText;
+window.downloadOcrText = downloadOcrText;
+window.sendOcrTextToChat = sendOcrTextToChat;
+window.clearChatAttachment = clearChatAttachment;
+
+window.handleChatFileInputChange = function (inputEl) {
+  if (inputEl && inputEl.files && inputEl.files[0]) {
+    const file = inputEl.files[0];
+    inputEl.value = "";
+    handleChatFileAttachment(file);
+  }
+};
+
+window.handleOcrModalFileInputChange = function (inputEl) {
+  if (inputEl && inputEl.files && inputEl.files[0]) {
+    const file = inputEl.files[0];
+    inputEl.value = "";
+    handleOcrModalFileUpload(file);
+  }
+};
 
 // Run on page load
 document.addEventListener("DOMContentLoaded", initApp);
