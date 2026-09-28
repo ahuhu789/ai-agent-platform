@@ -114,17 +114,20 @@ cp .env.example .env
 Hệ thống hỗ trợ cả chế độ có API Key và không có API Key:
 ```ini
 # Chế độ LLM thật (OpenAI / Groq)
-LLM_PROVIDER=openai
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=gpt-4o-mini
+# Mặc định demo offline, không gọi API và không tiêu quota LLM
+LLM_PROVIDER=mock
+
+# Khi muốn dùng OpenAI thật, đổi provider và nhập key thật:
+# LLM_PROVIDER=openai
+# OPENAI_API_KEY=your_openai_api_key_here
+# OPENAI_MODEL=gpt-4o-mini
 
 # MCP: thời gian kết nối, thời gian thao tác và TTL cache khám phá tool (giây)
 MCP_CONNECT_TIMEOUT_SECONDS=10
 MCP_OPERATION_TIMEOUT_SECONDS=30
 MCP_DISCOVERY_TTL_SECONDS=60
 
-# Chế độ Mock LLM / Rule-based (không tốn phí API, chạy offline hoàn toàn)
-# LLM_PROVIDER=mock
+# Các giá trị key bắt đầu bằng `your_` chỉ là placeholder và sẽ bị bỏ qua.
 ```
 *(Nếu không có API Key, các Agent sẽ tự động chạy chế độ Rule-based matcher offline mà không làm gián đoạn hệ thống).*
 

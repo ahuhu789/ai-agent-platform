@@ -61,19 +61,34 @@ def setup_llm() -> Optional[BaseLLM]:
     config_path = Path(__file__).resolve().parent.parent.parent / "shared" / "llm" / "config.yaml"
     try:
         config = load_config(str(config_path))
-        env_provider = os.getenv("LLM_PROVIDER")
-        api_key = (
-            os.getenv("OPENAI_API_KEY")
-            or os.getenv("GROQ_API_KEY")
-            or os.getenv("OPENROUTER_API_KEY")
-            or os.getenv("DEEPSEEK_API_KEY")
-            or os.getenv("DASHSCOPE_API_KEY")
-            or os.getenv("GEMINI_API_KEY")
+        provider = (os.getenv("LLM_PROVIDER") or "").lower().strip()
+        api_key = next(
+            (
+                value.strip()
+                for value in (
+                    os.getenv("OPENAI_API_KEY"),
+                    os.getenv("GROQ_API_KEY"),
+                    os.getenv("OPENROUTER_API_KEY"),
+                    os.getenv("DEEPSEEK_API_KEY"),
+                    os.getenv("DASHSCOPE_API_KEY"),
+                    os.getenv("GEMINI_API_KEY"),
+                )
+                if value and not value.strip().lower().startswith("your_")
+            ),
+            None,
         )
 
-        if env_provider and env_provider.lower().strip() != "mock":
-            p = env_provider.lower().strip()
-            config.active_provider = "google" if p == "gemini" else p
+        if provider == "mock":
+            config.active_provider = "mock"
+        elif provider in {"ollama", "huggingface"}:
+            config.active_provider = provider
+        elif provider:
+            if not api_key:
+                logger.info(
+                    "[AgentSetup] No valid API key set. Running in offline Rule-based & Template mode."
+                )
+                return None
+            config.active_provider = "google" if provider == "gemini" else provider
         elif api_key:
             # Tự động nhận diện provider theo tiền tố API key
             if api_key.startswith("gsk_"):
@@ -84,8 +99,6 @@ def setup_llm() -> Optional[BaseLLM]:
                 config.active_provider = "google"
             else:
                 config.active_provider = "openai"
-        elif env_provider and env_provider.lower().strip() == "mock":
-            config.active_provider = "mock"
         else:
             logger.info("[AgentSetup] No API key set. Running in offline Rule-based & Template mode.")
             return None

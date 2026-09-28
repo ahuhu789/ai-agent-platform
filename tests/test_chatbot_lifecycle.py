@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
+from apps.chatbot.agent_setup import setup_llm
 from apps.chatbot.main import app, lifespan
 
 
@@ -55,3 +56,20 @@ def test_lifespan_disconnects_when_startup_is_interrupted(monkeypatch, error_typ
         asyncio.run(start())
 
     assert client.events == ["connect", "disconnect"]
+
+
+def test_mock_provider_wins_over_configured_api_key(monkeypatch):
+    monkeypatch.setattr("dotenv.load_dotenv", lambda **_kwargs: False)
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_would_otherwise_enable_network")
+
+    assert setup_llm().is_mock
+
+
+def test_placeholder_api_key_keeps_demo_offline(monkeypatch):
+    monkeypatch.setattr("dotenv.load_dotenv", lambda **_kwargs: False)
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "your_groq_api_key_here")
+    monkeypatch.setenv("OPENAI_API_KEY", "your_groq_or_openai_api_key_here")
+
+    assert setup_llm() is None
