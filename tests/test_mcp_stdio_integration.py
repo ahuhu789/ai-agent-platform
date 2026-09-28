@@ -11,7 +11,8 @@ CASES = {
 }
 
 
-def test_real_stdio_servers_discover_and_call_tools():
+def test_real_stdio_servers_discover_and_call_tools(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     client = setup_mcp_client()
     try:
         client.connect_all()

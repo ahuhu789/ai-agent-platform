@@ -117,7 +117,12 @@ class MultiServerMCPClient(BaseMCPClient):
         args = config.get("args", [])
         env = {**os.environ, **config.get("env", {})}
 
-        params = StdioServerParameters(command=command, args=args, env=env)
+        params = StdioServerParameters(
+            command=command,
+            args=args,
+            env=env,
+            cwd=config.get("cwd"),
+        )
         read_stream, write_stream = await self._exit_stack.enter_async_context(stdio_client(params))
         session = await self._exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
         await session.initialize()

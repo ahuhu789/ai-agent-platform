@@ -25,18 +25,22 @@ logger = setup_logger("fme.agent_setup")
 def setup_mcp_client() -> MultiServerMCPClient:
     """Khởi tạo MCP Client cho 3 MCP Server phân hệ."""
     python_exe = sys.executable
+    repo_root = Path(__file__).resolve().parents[2]
     configs = {
         "hiring": {
             "command": python_exe,
             "args": ["-m", "mcp_servers.hiring.server", "--transport", "stdio"],
+            "cwd": repo_root,
         },
         "attendance": {
             "command": python_exe,
             "args": ["-m", "mcp_servers.attendance.server", "--transport", "stdio"],
+            "cwd": repo_root,
         },
         "employee": {
             "command": python_exe,
             "args": ["-m", "mcp_servers.employee.server", "--transport", "stdio"],
+            "cwd": repo_root,
         },
     }
     return MultiServerMCPClient(configs)
